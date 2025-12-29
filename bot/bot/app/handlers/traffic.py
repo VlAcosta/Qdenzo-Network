@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import session_scope
 from ..keyboards.common import back_kb
 from ..marzban.client import MarzbanClient
-from ..services.devices import list_devices, type_title
+from ..services.devices import DEVICE_TYPES, list_devices
 from ..services.subscriptions import get_or_create_subscription
 from ..services.users import get_user_by_tg_id
 
@@ -31,6 +31,8 @@ def _plan_limit_gb(plan_code: str) -> int:
         'family': settings.traffic_limit_family_gb,
     }.get(plan_code, 0)
 
+def _type_title(device_type: str) -> str:
+    return DEVICE_TYPES.get(device_type, device_type)
 
 async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
     async with session_scope() as session:
@@ -55,7 +57,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
         except Exception:
             used = 0
         total_used += used
-        lines.append(f"• {type_title(d.device_type)} <b>{d.label}</b>: { _gb(used):.2f } GB")
+        lines.append(f"• {_type_title(d.device_type)} <b>{d.label}</b>: { _gb(used):.2f } GB")
 
     limit_gb = _plan_limit_gb(sub.plan_code)
     limit_bytes = limit_gb * (1024 ** 3)

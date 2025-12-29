@@ -5,14 +5,17 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import Device
-from ..services.devices import type_title
+from ..services.devices import DEVICE_TYPES
 
+
+def _type_title(device_type: str) -> str:
+    return DEVICE_TYPES.get(device_type, device_type)
 
 def devices_list_kb(devices: list[Device], *, can_add: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for d in devices:
         status = '✅' if d.status == 'active' else '⛔️'
-        title = f"{status} {type_title(d.device_type)} {d.label or ''}".strip()
+        title = f"{status} {_type_title(d.device_type)} {d.label or ''}".strip()
         rows.append([InlineKeyboardButton(text=title, callback_data=f'dev:view:{d.id}')])
 
     if can_add:

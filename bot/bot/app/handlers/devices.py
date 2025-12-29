@@ -21,7 +21,6 @@ from ..services.devices import (
     get_device_connection_links,
     list_devices,
     rename_device,
-    type_title,
 )
 from ..services.subscriptions import get_or_create_subscription, is_active
 from ..services.users import get_or_create_user, get_user_by_tg_id
@@ -34,6 +33,8 @@ class DeviceStates(StatesGroup):
     choosing_new_device_name = State()
     renaming_device = State()
 
+def _type_title(device_type: str) -> str:
+    return DEVICE_TYPES.get(device_type, device_type)
 
 async def _show_devices(call_or_message, *, user_id: int) -> None:
     async with session_scope() as session:
@@ -387,7 +388,7 @@ async def _show_device_view(call: CallbackQuery, device_id: int) -> None:
     status = '✅ Активно' if device.status == 'active' else ('⛔️ Выключено' if device.status == 'disabled' else '🗑 Удалено')
     text = (
         f"<b>Устройство #{device.slot}</b>\n"
-        f"Тип: {type_title(device.device_type)}\n"
+        f"Тип: {_type_title(device.device_type)}\n"
         f"Имя: <b>{h(device.label)}</b>\n"
         f"Статус: {status}"
     )
