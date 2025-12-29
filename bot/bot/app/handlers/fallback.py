@@ -9,6 +9,7 @@ from ..keyboards.main import main_menu
 from ..config import settings
 from ..db import session_scope
 from ..services.users import get_user_by_tg_id
+from ..services.subscriptions import get_or_create_subscription, is_active
 
 router = Router()
 
@@ -19,8 +20,12 @@ async def any_text(msg: Message) -> None:
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, msg.from_user.id)
     is_admin = bool(user and user.tg_id in settings.admin_id_list)
+    has_subscription = False
+    if user:
+        sub = await get_or_create_subscription(session, user.id)
+        has_subscription = is_active(sub)
 
     await msg.answer(
         "Я работаю через кнопки меню 👇",
-        reply_markup=main_menu(is_admin=is_admin),
+        reply_markup=main_menu(is_admin=is_admin, has_subscription=has_subscription),
     )

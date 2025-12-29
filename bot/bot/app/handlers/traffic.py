@@ -9,10 +9,12 @@ from aiogram.types import CallbackQuery, Message
 from ..config import settings
 from ..db import session_scope
 from ..keyboards.common import back_kb
+from ..keyboards.traffic import traffic_kb
 from ..marzban.client import MarzbanClient
 from ..services.devices import DEVICE_TYPES, list_devices
 from ..services.subscriptions import get_or_create_subscription
 from ..services.users import get_user_by_tg_id
+from ..utils.telegram import edit_message_text
 
 router = Router()
 
@@ -71,14 +73,28 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
         "<b>По устройствам:</b>\n"
         + ("\n".join(lines) if lines else "—")
         + "\n\n"
-        "Лимиты и докуп пакетов можно настроить позже (сейчас — базовый учет)."
+        "<b>Soft cap</b>: при 100% интернет не отключается — включается Traffic Saver Mode.\n"
+        "Traffic Saver Mode: ограничивает Streaming/Gaming; оставляет Smart/Work/Low Internet."
     )
 
     if edit:
-        await call_or_msg.message.edit_text(text, reply_markup=back_kb('back'))
+        await edit_message_text(call_or_msg, text, reply_markup=back_kb('back'))
         await call_or_msg.answer()
     else:
-        await call_or_msg.answer(text, reply_markup=back_kb('back'))
+        await call_or_msg.answer(text, reply_markup=traffic_kb())
+
+
+@router.callback_query(F.data == 'traffic:buy')
+async def cb_traffic_buy(call: CallbackQuery) -> None:
+    text = (
+        "<b>➕ Докупить трафик</b>\n\n"
+        "• +0.5 ТБ — 149 ₽ (до конца текущего периода)\n"
+        "• +1 ТБ — 249 ₽ (до конца текущего периода)\n"
+        "• +2 ТБ — 449 ₽ (до конца текущего периода)\n\n"
+        "Для покупки напишите в поддержку и приложите оплату."
+    )
+    await edit_message_text(call, text, reply_markup=back_kb('traffic'))
+    await call.answer()
 
 
 @router.callback_query(F.data == 'traffic')

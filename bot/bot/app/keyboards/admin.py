@@ -9,8 +9,14 @@ from ..models import Order
 
 def admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📊 Дашборд', callback_data='admin:dashboard')],
+        [InlineKeyboardButton(text='🔎 Пользователь', callback_data='admin:user')],
+        [InlineKeyboardButton(text='💳 Платежи', callback_data='admin:payments')],
+        [InlineKeyboardButton(text='📦 Подписки', callback_data='admin:subs')],
+        [InlineKeyboardButton(text='📈 Трафик', callback_data='admin:traffic')],
+        [InlineKeyboardButton(text='🧪 Качество', callback_data='admin:quality')],
+        [InlineKeyboardButton(text='⚙️ Настройки', callback_data='admin:settings')],
         [InlineKeyboardButton(text='🧾 Ожидают оплаты', callback_data='admin:pending')],
-        [InlineKeyboardButton(text='🔎 Пользователь', callback_data='admin:find')],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='back')],
     ])
 

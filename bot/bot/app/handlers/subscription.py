@@ -10,9 +10,11 @@ from aiogram.types import CallbackQuery, Message
 
 from ..db import session_scope
 from ..keyboards.common import back_kb
+from ..keyboards.subscription import subscription_kb
 from ..services import get_or_create_subscription
 from ..services.devices import count_active_devices
 from ..services.users import get_or_create_user
+from ..utils.telegram import edit_message_text
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -53,8 +55,14 @@ async def cmd_sub(message: Message) -> None:
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n"
         f"Осталось: <b>{_remaining(sub.expires_at)}</b>\n\n"
         f"Устройства: <b>{used}/{sub.devices_limit}</b>\n"
+        "\n<b>Доступные профили:</b>\n"
+        + _profiles_for_plan(sub.plan_code)
+        + "\n\n<b>Лимиты по тарифам:</b>\n"
+        "Start — 3 устройства (1 телефон, 1 ПК, 1 ТВ)\n"
+        "Pro — 5 устройств (макс: 1 ПК, 2 ТВ, 3 телефон/планшет)\n"
+        "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
     )
-    await message.answer(text, reply_markup=back_kb())
+    await message.answer(text, reply_markup=subscription_kb())
 
 
 @router.callback_query(F.data == 'sub')
@@ -77,6 +85,28 @@ async def cb_sub(call: CallbackQuery) -> None:
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n"
         f"Осталось: <b>{_remaining(sub.expires_at)}</b>\n\n"
         f"Устройства: <b>{used}/{sub.devices_limit}</b>\n"
+        "\n<b>Доступные профили:</b>\n"
+        + _profiles_for_plan(sub.plan_code)
+        + "\n\n<b>Лимиты по тарифам:</b>\n"
+        "Start — 3 устройства (1 телефон, 1 ПК, 1 ТВ)\n"
+        "Pro — 5 устройств (макс: 1 ПК, 2 ТВ, 3 телефон/планшет)\n"
+        "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
     )
-    await call.message.edit_text(text, reply_markup=back_kb())
+    await edit_message_text(call, text, reply_markup=subscription_kb())
     await call.answer()
+    
+@router.callback_query(F.data == 'sub:history')
+async def cb_sub_history(call: CallbackQuery) -> None:
+    await edit_message_text(call, "История оплат появится здесь позже.", reply_markup=back_kb('sub'))
+    await call.answer()
+
+
+def _profiles_for_plan(plan_code: str) -> str:
+    plan = (plan_code or '').lower()
+    if plan == 'start':
+        return "Smart, Work, Low Internet"
+    if plan == 'pro':
+        return "Smart, Work, Low Internet, Streaming, Gaming"
+    if plan == 'family':
+        return "Все профили + Kids Safe"
+    return "—"

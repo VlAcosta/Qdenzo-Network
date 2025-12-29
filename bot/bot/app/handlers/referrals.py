@@ -12,6 +12,7 @@ from ..config import settings
 from ..db import session_scope
 from ..services.users import get_user_by_tg_id
 from ..services.referrals import CAP_SECONDS, get_referral_stats
+from ..utils.telegram import edit_message_text
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -71,11 +72,21 @@ async def _render(call_or_msg, bot: Bot) -> None:
         f"Осталось в окне: <b>{_fmt_seconds(stats['remaining_seconds'])}</b>\n"
         f"Окно до: <b>{fmt_dt(stats['window_end_at'])}</b>\n\n"
         "Бонус начисляется за <b>каждую оплату</b> реферала.\n"
-        "Максимум — <b>15 дней</b> бонусов в каждом 30‑дневном окне."
+        "Максимум — <b>15 дней</b> бонусов в каждом 30‑дневном окне.\n\n"
+        "<b>Таблица начислений (если реферал купил Start):</b>\n"
+        "• Start 1 мес: у тебя Start +1 день / Pro +12 часов / Family +3 часа\n"
+        "• Start 3 мес: у тебя Start +36 часов / Pro +12 часов / Family +6 часов\n"
+        "• Start 6/12 мес: у тебя Start +3 дня / Pro +2 дня / Family +1 день\n\n"
+        "<b>Если реферал купил Pro:</b>\n"
+        "• Pro 1/3 мес: у тебя Start +2 дня / Pro +1 день / Family +12 часов\n"
+        "• Pro 6/12 мес: у тебя Start +3 дня / Pro +2 дня / Family +1 день\n\n"
+        "<b>Если реферал купил Family:</b>\n"
+        "• Family 3/6 мес: у тебя Start +5 дней / Pro +3 дня / Family +2 дня\n"
+        "• Family 12 мес: у тебя Start +7 дней / Pro +5 дней / Family +3 дня"
     )
 
     if isinstance(call_or_msg, CallbackQuery):
-        await call_or_msg.message.edit_text(text, reply_markup=kb)
+        await edit_message_text(call_or_msg, text, reply_markup=kb)
         await call_or_msg.answer()
     else:
         await call_or_msg.answer(text, reply_markup=kb)

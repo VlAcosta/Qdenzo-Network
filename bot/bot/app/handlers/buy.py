@@ -16,6 +16,7 @@ from ..services.catalog import get_plan_option
 from ..services.subscriptions import activate_trial
 from ..services.users import get_or_create_user
 from ..utils.text import h
+from ..utils.telegram import edit_message_text
 
 router = Router()
 
@@ -51,7 +52,7 @@ async def cmd_buy(message: Message) -> None:
 
 @router.callback_query(F.data == 'buy')
 async def cb_buy(call: CallbackQuery) -> None:
-    await call.message.edit_text('💳 Выберите тариф:', reply_markup=plans_kb(include_trial=True))
+    await edit_message_text(call, '💳 Выберите тариф:', reply_markup=plans_kb(include_trial=True))
     await call.answer()
 
 
@@ -76,10 +77,10 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
         if code == 'trial':
             ok, reason = await activate_trial(session, user)
             if not ok:
-                await call.message.edit_text(f"⛔️ {h(reason)}", reply_markup=plans_kb(include_trial=False))
+                await edit_message_text(call, f"⛔️ {h(reason)}", reply_markup=plans_kb(include_trial=False))
                 await call.answer()
                 return
-            await call.message.edit_text(_plan_choice_text(code, months), reply_markup=None)
+            await edit_message_text(call, _plan_choice_text(code, months), reply_markup=None)
             await call.answer('Trial активирован')
             return
 
@@ -91,7 +92,15 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
     text += "После оплаты нажмите <b>Я оплатил</b> и отправьте чек/скрин в поддержку.\n\n"
     text += f"Поддержка: {h(settings.support_username)}"
 
-    await call.message.edit_text(text, reply_markup=order_payment_kb(order.id, yookassa_url=(settings.yookassa_pay_url or None), crypto_url=(settings.crypto_pay_url or None)))
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=order_payment_kb(
+            order.id,
+            yookassa_url=(settings.yookassa_pay_url or None),
+            crypto_url=(settings.crypto_pay_url or None),
+        ),
+    )
 
     # Notify admins
     admin_text = (
@@ -140,7 +149,8 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
         reply_markup=admin_order_action_kb(order_id),
     )
 
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         f"✅ Ок! Мы получили отметку об оплате заказа #{order_id}.\n"
         f"Обычно подтверждение занимает 1–30 минут.\n\n"
         f"Поддержка: {h(settings.support_username)}",
@@ -175,5 +185,5 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
         order.status = 'canceled'
         session.add(order)
         await session.commit()
-    await call.message.edit_text(f"❌ Заказ #{order_id} отменён.")
+    await edit_message_text(call, f"❌ Заказ #{order_id} отменён.")
     await call.answer()

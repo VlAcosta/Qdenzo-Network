@@ -98,6 +98,7 @@ async def create_device(
         device_type=device_type,
         label=label,
         status='active',
+        profile_code=user.profile_code or 'smart',
         marzban_username=m_username,
         marzban_user_id=str(m_user.get('id') or ''),
         created_at=now_utc(),

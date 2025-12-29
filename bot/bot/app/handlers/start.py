@@ -9,8 +9,10 @@ from aiogram.types import FSInputFile, CallbackQuery, Message
 from ..config import settings
 from ..db import session_scope
 from ..keyboards.main import main_menu
+from ..services.subscriptions import is_active
 from ..services import get_or_create_subscription
 from ..services.users import get_or_create_user
+from ..utils.telegram import edit_message_text
 from ..utils.text import h
 
 router = Router()
@@ -51,13 +53,17 @@ async def cmd_start(message: Message) -> None:
     if photo_path:
         try:
             photo = FSInputFile(str(photo_path))
-            await message.answer_photo(photo=photo, caption=caption, reply_markup=main_menu(user.is_admin))
+            await message.answer_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
+            )
             return
         except Exception:
             # fall back to text
             pass
 
-    await message.answer(caption, reply_markup=main_menu(user.is_admin))
+    await message.answer(caption, reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)))
 
 
 @router.message(Command('menu'))
@@ -71,11 +77,12 @@ async def cmd_menu(message: Message) -> None:
             ref_code=None,
             locale=message.from_user.language_code,
         )
+        sub = await get_or_create_subscription(session, user.id)
         if user.is_banned:
             await message.answer('⛔️ Доступ к боту ограничен.')
             return
     text = f"🏠 <b>Меню {h(settings.brand_name)}</b>"
-    await message.answer(text, reply_markup=main_menu(user.is_admin))
+    await message.answer(text, reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)))
 
 
 @router.callback_query(F.data == 'back')
@@ -89,5 +96,10 @@ async def cb_back(call: CallbackQuery) -> None:
             ref_code=None,
             locale=call.from_user.language_code,
         )
-    await call.message.edit_text(f"🏠 <b>Меню {h(settings.brand_name)}</b>", reply_markup=main_menu(user.is_admin))
+    sub = await get_or_create_subscription(session, user.id)
+    await edit_message_text(
+        call,
+        f"🏠 <b>Меню {h(settings.brand_name)}</b>",
+        reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
+    )
     await call.answer()

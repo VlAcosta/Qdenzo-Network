@@ -65,6 +65,8 @@ class Device(Base):
     device_type: Mapped[str] = mapped_column(String(16), nullable=False, server_default='phone')
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default='active')  # active/disabled/deleted
 
+    profile_code: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'smart'")
+
     marzban_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     marzban_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

@@ -25,6 +25,7 @@ from ..services.devices import (
 from ..services.subscriptions import get_or_create_subscription, is_active
 from ..services.users import get_or_create_user, get_user_by_tg_id
 from ..utils.text import h
+from ..utils.telegram import edit_message_text
 
 router = Router()
 
@@ -49,7 +50,7 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
     )
     kb = devices_list_kb(devices, can_add=can_add)
     if isinstance(call_or_message, CallbackQuery):
-        await call_or_message.message.edit_text(text, reply_markup=kb)
+        await edit_message_text(call_or_message, text, reply_markup=kb)
         await call_or_message.answer()
     else:
         await call_or_message.answer(text, reply_markup=kb)
@@ -101,7 +102,8 @@ async def cb_device_view(call: CallbackQuery) -> None:
         f"Статус: <b>{status}</b>\n\n"
         "Действия ниже:"
     )
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         text,
         reply_markup=device_menu_kb(device.id, is_active=device.status == 'active'),
     )
@@ -127,7 +129,8 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
         return
 
     await state.clear()
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         "➕ <b>Добавить устройство</b>\n\nВыберите тип устройства:",
         reply_markup=device_type_kb(),
     )
@@ -142,7 +145,8 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(DeviceStates.choosing_new_device_name)
     await state.update_data(device_type=device_type)
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         "✍️ Отправьте <b>название</b> для устройства (например: <i>Мой iPhone</i>).\n"
         "\nМожно просто написать: Телефон / ПК / ТВ.",
         reply_markup=back_kb('devices'),
@@ -207,7 +211,8 @@ async def cb_rename_device(call: CallbackQuery, state: FSMContext) -> None:
     device_id = int(call.data.split(':')[-1])
     await state.set_state(DeviceStates.renaming_device)
     await state.update_data(device_id=device_id)
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         "✏️ Отправьте новое название устройства:",
         reply_markup=back_kb('devices'),
     )
@@ -301,7 +306,7 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         "Нажмите кнопку ниже или скопируйте ссылку:\n\n"
         f"<pre><code>{h(link_text)}</code></pre>"
     )
-    await call.message.edit_text(text, reply_markup=kb)
+    await edit_message_text(call, text, reply_markup=kb)
     await call.answer()
 
 
@@ -420,7 +425,8 @@ async def _show_device_view(call: CallbackQuery, device_id: int) -> None:
         f"Имя: <b>{h(device.label)}</b>\n"
         f"Статус: {status}"
     )
-    await call.message.edit_text(
+    await edit_message_text(
+        call,
         text,
         reply_markup=device_menu_kb(device_id, is_active=device.status == 'active'),
     )
