@@ -13,10 +13,10 @@ def devices_list_kb(devices: list[Device], *, can_add: bool) -> InlineKeyboardMa
     for d in devices:
         status = '✅' if d.status == 'active' else '⛔️'
         title = f"{status} {type_title(d.device_type)} {d.label or ''}".strip()
-        rows.append([InlineKeyboardButton(text=title, callback_data=f'dev:{d.id}')])
+        rows.append([InlineKeyboardButton(text=title, callback_data=f'dev:view:{d.id}')])
 
     if can_add:
-        rows.append([InlineKeyboardButton(text='➕ Добавить устройство', callback_data='dev_add')])
+        rows.append([InlineKeyboardButton(text='➕ Добавить устройство', callback_data='dev:add')])
 
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='back')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -24,15 +24,15 @@ def devices_list_kb(devices: list[Device], *, can_add: bool) -> InlineKeyboardMa
 
 def device_menu_kb(device_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text='🔗 Получить конфиг', callback_data=f'dev_cfg:{device_id}')],
-        [InlineKeyboardButton(text='✏️ Переименовать', callback_data=f'dev_rename:{device_id}')],
-        [InlineKeyboardButton(text='🧪 Проверить доступ', callback_data=f'dev_check:{device_id}')],
+        [InlineKeyboardButton(text='🔗 Получить конфиг', callback_data=f'dev:cfg:{device_id}')],
+        [InlineKeyboardButton(text='✏️ Переименовать', callback_data=f'dev:rename:{device_id}')],
+        [InlineKeyboardButton(text='🧪 Проверить доступ', callback_data=f'dev:check:{device_id}')],
     ]
     if is_active:
-        rows.append([InlineKeyboardButton(text='⛔️ Отключить', callback_data=f'dev_toggle:{device_id}')])
+        rows.append([InlineKeyboardButton(text='⛔️ Отключить', callback_data=f'dev:toggle:{device_id}')])
     else:
-        rows.append([InlineKeyboardButton(text='✅ Включить', callback_data=f'dev_toggle:{device_id}')])
-    rows.append([InlineKeyboardButton(text='🗑 Удалить', callback_data=f'dev_del:{device_id}')])
+        rows.append([InlineKeyboardButton(text='✅ Включить', callback_data=f'dev:toggle:{device_id}')])
+    rows.append([InlineKeyboardButton(text='🗑 Удалить', callback_data=f'dev:del:{device_id}')])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='devices')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -40,16 +40,16 @@ def device_menu_kb(device_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
 def device_type_kb() -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton(text='📱 Телефон', callback_data='devtype:phone'),
-            InlineKeyboardButton(text='💻 ПК', callback_data='devtype:pc'),
+            InlineKeyboardButton(text='📱 Телефон', callback_data='dev:type:phone'),
+            InlineKeyboardButton(text='💻 ПК', callback_data='dev:type:pc'),
         ],
         [
-            InlineKeyboardButton(text='📺 ТВ', callback_data='devtype:tv'),
-            InlineKeyboardButton(text='📟 Планшет', callback_data='devtype:tablet'),
+            InlineKeyboardButton(text='📺 ТВ', callback_data='dev:type:tv'),
+            InlineKeyboardButton(text='📟 Планшет', callback_data='dev:type:tablet'),
         ],
         [
-            InlineKeyboardButton(text='📡 Роутер', callback_data='devtype:router'),
-            InlineKeyboardButton(text='🔧 Другое', callback_data='devtype:other'),
+            InlineKeyboardButton(text='📡 Роутер', callback_data='dev:type:router'),
+            InlineKeyboardButton(text='🔧 Другое', callback_data='dev:type:other'),
         ],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='devices')],
     ]

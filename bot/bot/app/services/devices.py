@@ -19,9 +19,12 @@ DEVICE_TYPES = {
     'pc': '💻 ПК',
     'tv': '📺 ТВ',
     'tablet': '📟 Планшет',
+    'router': '📡 Роутер',
     'other': '🔧 Другое',
 }
 
+def type_title(device_type: str) -> str:
+    return DEVICE_TYPES.get(device_type, device_type)
 
 def _marzban_username(tg_id: int, slot: int) -> str:
     # Unique per device
@@ -33,8 +36,11 @@ async def list_devices(session: AsyncSession, user_id: int) -> list[Device]:
     return list(q.scalars().all())
 
 
-async def get_device(session: AsyncSession, user_id: int, device_id: int) -> Device | None:
-    q = await session.execute(select(Device).where(Device.user_id == user_id, Device.id == device_id))
+async def get_device(session: AsyncSession, device_id: int, user_id: int | None = None) -> Device | None:
+    stmt = select(Device).where(Device.id == device_id)
+    if user_id is not None:
+        stmt = stmt.where(Device.user_id == user_id)
+    q = await session.execute(stmt)
     return q.scalar_one_or_none()
 
 
@@ -185,11 +191,3 @@ async def get_device_connection_links(marz: MarzbanClient, marzban_username: str
     sub_url = u.get('subscription_url')
     link = links[0] if links else None
     return link, sub_url
-
-
-async def set_device_status(session: AsyncSession, device: Device, status: str) -> Device:
-    device.status = status
-    device.updated_at = now_utc()
-    session.add(device)
-    await session.commit()
-    return device

@@ -13,9 +13,18 @@ from ..db import session_scope
 from ..keyboards.common import back_kb
 from ..keyboards.devices import device_menu_kb, device_type_kb, devices_list_kb
 from ..marzban.client import MarzbanClient
-from ..services.devices import (DEVICE_TYPES, create_device, get_device, get_device_connection_links, list_devices, rename_device)
+from ..services.devices import (
+    DEVICE_TYPES,
+    count_active_devices,
+    create_device,
+    get_device,
+    get_device_connection_links,
+    list_devices,
+    rename_device,
+    type_title,
+)
 from ..services.subscriptions import get_or_create_subscription, is_active
-from ..services.users import get_or_create_user
+from ..services.users import get_or_create_user, get_user_by_tg_id
 from ..utils.text import h
 
 router = Router()
@@ -79,7 +88,7 @@ async def cb_device_view(call: CallbackQuery) -> None:
     )
     await call.message.edit_text(
         text,
-        reply_markup=device_menu_kb(device.id, status=device.status),
+        reply_markup=device_menu_kb(device.id, is_active=device.status == 'active'),
     )
     await call.answer()
 
@@ -191,7 +200,7 @@ async def msg_rename_device(message: Message, state: FSMContext) -> None:
             await message.answer('Устройство не найдено.')
             await state.clear()
             return
-        await rename_device(session, device_id, new_name)
+        await rename_device(session, device, new_name)
 
     await state.clear()
     await message.answer('✅ Название обновлено.', reply_markup=back_kb('devices'))
@@ -219,19 +228,22 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         verify_ssl=settings.marzban_verify_ssl,
     )
     try:
-        links = await get_device_connection_links(session_scope=session_scope, marz=marz, device_id=device_id)
+        if device.marzban_username:
+            link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
+        else:
+            link, subscription_url = None, None
     finally:
         await marz.close()
 
     # Show both (link + subscription) if available
     btn_rows = []
-    if links.get('import'):
+    if link:
         btn_rows.append([
-            {'text': '🔗 Открыть / Импортировать', 'url': links['import']}
+            {'text': '🔗 Открыть / Импортировать', 'url': link}
         ])
-    if links.get('subscription'):
+    if subscription_url:
         btn_rows.append([
-            {'text': '📥 Подписка (subscription)', 'url': links['subscription']}
+            {'text': '📥 Подписка (subscription)', 'url': subscription_url}
         ])
     btn_rows.append([
         {'text': '⬅️ Назад', 'callback_data': f'dev:view:{device_id}'}
@@ -254,7 +266,7 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         rows.append(row_btns)
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
-    link_text = links.get('import') or links.get('subscription') or '—'
+    link_text = link or subscription_url or '—'
     text = (
         "🔗 <b>Конфиг для устройства</b>\n\n"
         "Нажмите кнопку ниже или скопируйте ссылку:\n\n"
@@ -379,5 +391,8 @@ async def _show_device_view(call: CallbackQuery, device_id: int) -> None:
         f"Имя: <b>{h(device.label)}</b>\n"
         f"Статус: {status}"
     )
-    await call.message.edit_text(text, reply_markup=device_menu_kb(device_id, device.status, device.status == 'active'))
+    await call.message.edit_text(
+        text,
+        reply_markup=device_menu_kb(device_id, is_active=device.status == 'active'),
+    )
     await call.answer()
