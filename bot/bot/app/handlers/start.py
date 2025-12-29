@@ -31,6 +31,7 @@ async def cmd_start(message: Message) -> None:
             username=message.from_user.username,
             first_name=message.from_user.first_name,
             ref_code=ref,
+            locale=message.from_user.language_code,
         )
         sub = await get_or_create_subscription(session, user.id)
         if user.is_banned:
@@ -68,6 +69,7 @@ async def cmd_menu(message: Message) -> None:
             username=message.from_user.username,
             first_name=message.from_user.first_name,
             ref_code=None,
+            locale=message.from_user.language_code,
         )
         if user.is_banned:
             await message.answer('⛔️ Доступ к боту ограничен.')
@@ -85,6 +87,7 @@ async def cb_back(call: CallbackQuery) -> None:
             username=call.from_user.username,
             first_name=call.from_user.first_name,
             ref_code=None,
+            locale=call.from_user.language_code,
         )
     await call.message.edit_text(f"🏠 <b>Меню {h(settings.brand_name)}</b>", reply_markup=main_menu(user.is_admin))
     await call.answer()

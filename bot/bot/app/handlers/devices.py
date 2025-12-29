@@ -58,15 +58,29 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
 @router.message(Command('devices'))
 async def cmd_devices(message: Message) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=message.from_user.id, username=message.from_user.username, first_name=message.from_user.first_name, ref_code=None)
-    await _show_devices(message, user_id=user.id)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            ref_code=None,
+            locale=message.from_user.language_code,
+        )
+        await _show_devices(message, user_id=user.id)
 
 
 @router.callback_query(F.data == 'devices')
 async def cb_devices(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=call.from_user.id, username=call.from_user.username, first_name=call.from_user.first_name, ref_code=None)
-    await _show_devices(call, user_id=user.id)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        await _show_devices(call, user_id=user.id)
 
 
 @router.callback_query(F.data.startswith('dev:view:'))
@@ -97,7 +111,14 @@ async def cb_device_view(call: CallbackQuery) -> None:
 @router.callback_query(F.data == 'dev:add')
 async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=call.from_user.id, username=call.from_user.username, first_name=call.from_user.first_name, ref_code=None)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
         sub = await get_or_create_subscription(session, user.id)
         devices = await list_devices(session, user.id)
 
@@ -139,7 +160,14 @@ async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> 
         return
 
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=message.from_user.id, username=message.from_user.username, first_name=message.from_user.first_name, ref_code=None)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            ref_code=None,
+            locale=message.from_user.language_code,
+        )
         sub = await get_or_create_subscription(session, user.id)
         if not is_active(sub):
             await message.answer(

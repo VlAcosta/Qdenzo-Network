@@ -36,7 +36,14 @@ def _remaining(expires_at: datetime | None) -> str:
 @router.message(Command('sub'))
 async def cmd_sub(message: Message) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=message.from_user.id, username=message.from_user.username, first_name=message.from_user.first_name, ref_code=None)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            ref_code=None,
+            locale=message.from_user.language_code,
+        )
         sub = await get_or_create_subscription(session, user.id)
         used = await count_active_devices(session, user.id)
 
@@ -53,7 +60,14 @@ async def cmd_sub(message: Message) -> None:
 @router.callback_query(F.data == 'sub')
 async def cb_sub(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(session=session, tg_id=call.from_user.id, username=call.from_user.username, first_name=call.from_user.first_name, ref_code=None)
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
         sub = await get_or_create_subscription(session, user.id)
         used = await count_active_devices(session, user.id)
 

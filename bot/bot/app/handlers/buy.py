@@ -67,6 +67,7 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             username=call.from_user.username,
             first_name=call.from_user.first_name,
             ref_code=None,
+            locale=call.from_user.language_code,
         )
         if user.is_banned:
             await call.answer('Доступ ограничен', show_alert=True)
@@ -114,7 +115,16 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
         if not order:
             await call.answer('Заказ не найден', show_alert=True)
             return
-        if order.user_id != (await get_or_create_user(session=session, tg_id=call.from_user.id, username=call.from_user.username, first_name=call.from_user.first_name, ref_code=None)).id:
+        if order.user_id != (
+            await get_or_create_user(
+                session=session,
+                tg_id=call.from_user.id,
+                username=call.from_user.username,
+                first_name=call.from_user.first_name,
+                ref_code=None,
+                locale=call.from_user.language_code,
+            )
+        ).id:
             await call.answer('Это не ваш заказ', show_alert=True)
             return
         if order.status != 'pending':
@@ -147,7 +157,16 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
         if not order:
             await call.answer('Не найдено', show_alert=True)
             return
-        if order.user_id != (await get_or_create_user(session=session, tg_id=call.from_user.id, username=call.from_user.username, first_name=call.from_user.first_name, ref_code=None)).id:
+        if order.user_id != (
+            await get_or_create_user(
+                session=session,
+                tg_id=call.from_user.id,
+                username=call.from_user.username,
+                first_name=call.from_user.first_name,
+                ref_code=None,
+                locale=call.from_user.language_code,
+            )
+        ).id:
             await call.answer('Это не ваш заказ', show_alert=True)
             return
         if order.status != 'pending':
