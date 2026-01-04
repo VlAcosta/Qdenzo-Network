@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from ..config import settings
 from ..utils.telegram import edit_message_text
 from ..db import session_scope
+from ..keyboards.nav import nav_kb
 from ..keyboards.support import support_kb
 from ..services.devices import count_active_devices
 from ..services.subscriptions import get_or_create_subscription, is_active
@@ -20,7 +21,7 @@ router = Router()
 def _kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='✉️ Написать в поддержку', url=f'https://t.me/{settings.support_username.lstrip("@")}')],
-        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back')],
+        nav_kb(back_cb="support", home_cb="back").inline_keyboard[0],
     ])
 
 

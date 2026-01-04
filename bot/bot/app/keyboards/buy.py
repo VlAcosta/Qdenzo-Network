@@ -30,7 +30,7 @@ def trial_activated_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="➕ Подключить устройство", callback_data="dev:add")],
         [InlineKeyboardButton(text="📱 Мои устройства", callback_data="devices")],
         [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="back"),
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="buy"),
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
         ],
     ])

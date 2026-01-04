@@ -24,6 +24,7 @@ from .handlers.referrals import router as ref_router
 from .handlers.support import router as support_router
 from .handlers.faq import router as faq_router
 from .handlers.admin import router as admin_router
+from .handlers.navigation import router as nav_router
 from .handlers.fallback import router as fallback_router
 
 
@@ -42,6 +43,7 @@ def _build_dp() -> Dispatcher:
     dp.include_router(support_router)
     dp.include_router(faq_router)
     dp.include_router(admin_router)
+    dp.include_router(nav_router)
     dp.include_router(fallback_router)
     return dp
 

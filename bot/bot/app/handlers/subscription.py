@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..db import session_scope
-from ..keyboards.common import back_kb
+from ..keyboards.nav import nav_kb
 from ..keyboards.subscription import subscription_kb
 from ..services import get_or_create_subscription
 from ..services.devices import count_active_devices
@@ -97,7 +97,7 @@ async def cb_sub(call: CallbackQuery) -> None:
     
 @router.callback_query(F.data == 'sub:history')
 async def cb_sub_history(call: CallbackQuery) -> None:
-    await edit_message_text(call, "История оплат появится здесь позже.", reply_markup=back_kb('sub'))
+    await edit_message_text(call, "История оплат появится здесь позже.", reply_markup=nav_kb(back_cb='sub', home_cb='back'))
     await call.answer()
 
 

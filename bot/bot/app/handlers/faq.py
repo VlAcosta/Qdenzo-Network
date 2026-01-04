@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
+from ..keyboards.nav import nav_kb
 from ..utils.telegram import edit_message_text
 
 router = Router()
@@ -33,7 +34,7 @@ _FAQ_TEXT = """<b>FAQ / Инструкции</b>
 
 def _kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back')],
+        nav_kb(back_cb="support", home_cb="back").inline_keyboard[0],
     ])
 
 

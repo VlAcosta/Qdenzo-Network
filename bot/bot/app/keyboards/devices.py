@@ -24,7 +24,7 @@ def devices_list_kb(devices: list[Device], *, can_add: bool) -> InlineKeyboardMa
         rows.append([InlineKeyboardButton(text="➕ Подключить устройство", callback_data="dev:add")])
 
     rows.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="back"),
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="buy"),
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
     ])
 

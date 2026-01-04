@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import User
+from ..models import Device, User
 from .subscriptions import now_utc
 
 
@@ -22,4 +22,9 @@ async def set_profile_code(session: AsyncSession, user_id: int, code: str) -> No
     user.profile_code = code
     user.profile_updated_at = now_utc()
     session.add(user)
+    devices = await session.execute(select(Device).where(Device.user_id == user_id))
+    for device in devices.scalars().all():
+        device.profile_code = code
+        device.updated_at = now_utc()
+        session.add(device)
     await session.commit()

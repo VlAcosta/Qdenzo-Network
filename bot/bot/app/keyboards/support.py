@@ -10,5 +10,8 @@ def support_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='🩺 Диагностика', callback_data='support:diag'),
         ],
         [InlineKeyboardButton(text='✉️ Написать оператору', callback_data='support:chat')],
-        [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='back')],
+       [
+            InlineKeyboardButton(text='⬅️ Назад', callback_data='back'),
+            InlineKeyboardButton(text='🏠 Главное меню', callback_data='back'),
+        ],
     ])

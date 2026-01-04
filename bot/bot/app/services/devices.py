@@ -124,6 +124,15 @@ async def rename_device(session: AsyncSession, device: Device, new_label: str) -
     await session.refresh(device)
     return device
 
+async def set_device_profile(session: AsyncSession, device: Device, code: str) -> Device:
+    device.profile_code = code
+    device.updated_at = now_utc()
+    session.add(device)
+    await session.commit()
+    await session.refresh(device)
+    return device
+
+
 
 async def set_device_status(
     *,

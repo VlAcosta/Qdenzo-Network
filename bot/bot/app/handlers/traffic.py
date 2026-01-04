@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from ..config import settings
 from ..db import session_scope
-from ..keyboards.common import back_kb
+from ..keyboards.nav import nav_kb
 from ..keyboards.traffic import traffic_kb
 from ..marzban.client import MarzbanClient
 from ..services.devices import DEVICE_TYPES, list_devices
@@ -78,7 +78,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
     )
 
     if edit:
-        await edit_message_text(call_or_msg, text, reply_markup=back_kb('back'))
+        await edit_message_text(call_or_msg, text, reply_markup=nav_kb(back_cb='buy', home_cb='back'))
         await call_or_msg.answer()
     else:
         await call_or_msg.answer(text, reply_markup=traffic_kb())
@@ -93,7 +93,7 @@ async def cb_traffic_buy(call: CallbackQuery) -> None:
         "• +2 ТБ — 449 ₽ (до конца текущего периода)\n\n"
         "Для покупки напишите в поддержку и приложите оплату."
     )
-    await edit_message_text(call, text, reply_markup=back_kb('traffic'))
+    await edit_message_text(call, text, reply_markup=nav_kb(back_cb='traffic', home_cb='back'))
     await call.answer()
 
 

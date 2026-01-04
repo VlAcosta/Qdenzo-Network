@@ -12,5 +12,8 @@ def subscription_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='🛠 Сменить тариф', callback_data='buy'),
         ],
         [InlineKeyboardButton(text='🧾 История оплат', callback_data='sub:history')],
-        [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='back')],
+        [
+            InlineKeyboardButton(text='⬅️ Назад', callback_data='buy'),
+            InlineKeyboardButton(text='🏠 Главное меню', callback_data='back'),
+        ],
     ])

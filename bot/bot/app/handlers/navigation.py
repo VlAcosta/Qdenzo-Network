@@ -1,0 +1,44 @@
+from aiogram import F, Router
+from aiogram.types import CallbackQuery
+
+from ..config import settings
+from ..db import session_scope
+from ..keyboards.main import main_menu
+from ..services import get_or_create_subscription
+from ..services.subscriptions import is_active
+from ..services.users import get_or_create_user
+from ..utils.telegram import edit_message_text
+from ..utils.text import h
+
+router = Router()
+
+
+@router.callback_query(F.data == "back")
+async def cb_back(call: CallbackQuery) -> None:
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+
+        if user.is_banned:
+            await edit_message_text(
+                call,
+                "⛔️ Доступ к боту ограничен.\n"
+                "Если это ошибка — напишите в поддержку: " + h(settings.support_username),
+            )
+            await call.answer()
+            return
+
+        sub = await get_or_create_subscription(session, user.id)
+
+    await edit_message_text(
+        call,
+        f"🏠 <b>{h(settings.brand_name)}</b>\n\nВыберите действие 👇",
+        reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
+    )
+    await call.answer()
