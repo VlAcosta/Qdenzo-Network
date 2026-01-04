@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from ..config import settings
 from ..db import session_scope
+from ..keyboards.buy import buy_manage_kb, trial_activated_kb
 from ..keyboards.orders import order_payment_kb
 from ..keyboards.plans import plans_kb
-from ..models import Order
 from ..services import create_subscription_order, get_order, get_or_create_subscription
 from ..services.catalog import get_plan_option
-from ..services.subscriptions import activate_trial
+from ..services.subscriptions import activate_trial, is_active
 from ..services.users import get_or_create_user
 from ..utils.text import h
 from ..utils.telegram import edit_message_text
@@ -23,11 +21,11 @@ router = Router()
 
 def _plan_choice_text(code: str, months: int) -> str:
     opt = get_plan_option(code, months)
-    if code == 'trial':
+    if code == "trial":
         return (
-            f"🎁 <b>Trial</b> активирован на <b>{opt.duration_days*24} ч</b>\n\n"
+            f"🎁 <b>Trial</b> активирован на <b>{opt.duration_days * 24} ч</b>\n\n"
             f"Лимит устройств: <b>{opt.devices_limit}</b>\n"
-            f"Теперь добавьте устройство в разделе <b>Устройства</b>."
+            "👇 Нажмите кнопку ниже, чтобы подключить первое устройство."
         )
     return (
         f"🧾 Вы выбрали: <b>{h(opt.name)}</b>\n"
@@ -45,20 +43,44 @@ async def _notify_admins(bot: Bot, text: str, reply_markup=None) -> None:
             pass
 
 
-@router.message(Command('buy'))
+@router.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
-    await message.answer('💳 Выберите тариф:', reply_markup=plans_kb(include_trial=True))
+    await message.answer("💳 Выберите тариф:", reply_markup=plans_kb(include_trial=True))
 
 
-@router.callback_query(F.data == 'buy')
+@router.callback_query(F.data == "buy")
 async def cb_buy(call: CallbackQuery) -> None:
-    await edit_message_text(call, '💳 Выберите тариф:', reply_markup=plans_kb(include_trial=True))
+    """
+    Если подписка активна -> показываем хаб управления.
+    Если не активна -> показываем тарифы.
+    """
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        sub = await get_or_create_subscription(session, user.id)
+
+    if is_active(sub):
+        await edit_message_text(
+            call,
+            "⚙️ <b>Qdenzo Network — управление сервисом</b>\n\nВыберите действие 👇",
+            reply_markup=buy_manage_kb(),
+        )
+        await call.answer()
+        return
+
+    await edit_message_text(call, "💳 Выберите тариф:", reply_markup=plans_kb(include_trial=True))
     await call.answer()
 
 
-@router.callback_query(F.data.startswith('plan:'))
+@router.callback_query(F.data.startswith("plan:"))
 async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
-    _, code, months_s = call.data.split(':', 2)
+    _, code, months_s = call.data.split(":", 2)
     months = int(months_s)
 
     async with session_scope() as session:
@@ -71,21 +93,22 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             locale=call.from_user.language_code,
         )
         if user.is_banned:
-            await call.answer('Доступ ограничен', show_alert=True)
+            await call.answer("Доступ ограничен", show_alert=True)
             return
 
-        if code == 'trial':
+        if code == "trial":
             ok, reason = await activate_trial(session, user)
             if not ok:
                 await edit_message_text(call, f"⛔️ {h(reason)}", reply_markup=plans_kb(include_trial=False))
                 await call.answer()
                 return
-            await edit_message_text(call, _plan_choice_text(code, months), reply_markup=None)
-            await call.answer('Trial активирован')
+
+            await edit_message_text(call, _plan_choice_text(code, months), reply_markup=trial_activated_kb())
+            await call.answer("Trial активирован")
             return
 
         opt = get_plan_option(code, months)
-        order = await create_subscription_order(session, user.id, code, months, opt.price_rub, payment_method='manual')
+        order = await create_subscription_order(session, user.id, code, months, opt.price_rub, payment_method="manual")
 
     text = _plan_choice_text(code, months)
     text += "\n<b>Оплата:</b> сейчас <i>Manual</i> (админ подтверждает).\n"
@@ -110,19 +133,18 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
         f"Сумма: <b>{opt.price_rub} ₽</b>\n"
     )
     from ..keyboards.admin import admin_order_action_kb
-
     await _notify_admins(bot, admin_text, reply_markup=admin_order_action_kb(order.id))
 
     await call.answer()
 
 
-@router.callback_query(F.data.startswith('paid:'))
+@router.callback_query(F.data.startswith("paid:"))
 async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
-    order_id = int(call.data.split(':', 1)[1])
+    order_id = int(call.data.split(":", 1)[1])
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order:
-            await call.answer('Заказ не найден', show_alert=True)
+            await call.answer("Заказ не найден", show_alert=True)
             return
         if order.user_id != (
             await get_or_create_user(
@@ -134,13 +156,12 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
                 locale=call.from_user.language_code,
             )
         ).id:
-            await call.answer('Это не ваш заказ', show_alert=True)
+            await call.answer("Это не ваш заказ", show_alert=True)
             return
-        if order.status != 'pending':
-            await call.answer('Заказ уже обработан', show_alert=True)
+        if order.status != "pending":
+            await call.answer("Заказ уже обработан", show_alert=True)
             return
 
-    # Notify admins again
     from ..keyboards.admin import admin_order_action_kb
 
     await _notify_admins(
@@ -159,13 +180,13 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
     await call.answer()
 
 
-@router.callback_query(F.data.startswith('cancel_order:'))
+@router.callback_query(F.data.startswith("cancel_order:"))
 async def cb_cancel_order(call: CallbackQuery) -> None:
-    order_id = int(call.data.split(':', 1)[1])
+    order_id = int(call.data.split(":", 1)[1])
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order:
-            await call.answer('Не найдено', show_alert=True)
+            await call.answer("Не найдено", show_alert=True)
             return
         if order.user_id != (
             await get_or_create_user(
@@ -177,13 +198,14 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
                 locale=call.from_user.language_code,
             )
         ).id:
-            await call.answer('Это не ваш заказ', show_alert=True)
+            await call.answer("Это не ваш заказ", show_alert=True)
             return
-        if order.status != 'pending':
-            await call.answer('Уже обработан', show_alert=True)
+        if order.status != "pending":
+            await call.answer("Уже обработан", show_alert=True)
             return
-        order.status = 'canceled'
+        order.status = "canceled"
         session.add(order)
         await session.commit()
+
     await edit_message_text(call, f"❌ Заказ #{order_id} отменён.")
     await call.answer()

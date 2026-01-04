@@ -26,6 +26,10 @@ async def run_migrations(engine: AsyncEngine) -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(8) NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_code VARCHAR(16) NOT NULL DEFAULT 'smart';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ NULL;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_id INTEGER NULL;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_type VARCHAR(16) NULL;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_label VARCHAR(64) NULL;",
+
 
         # ---- subscriptions ----
         "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_code VARCHAR(16) NOT NULL DEFAULT 'trial';",

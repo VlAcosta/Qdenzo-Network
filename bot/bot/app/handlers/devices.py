@@ -1,17 +1,26 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from ..config import settings
 from ..db import session_scope
-from ..keyboards.common import back_kb
-from ..keyboards.devices import device_menu_kb, device_type_kb, devices_list_kb
+from ..keyboards.devices import (
+    device_delete_confirm_kb,
+    device_happ_kb,
+    device_menu_kb,
+    device_type_kb,
+    devices_list_kb,
+)
+from ..keyboards.nav import nav_kb
 from ..marzban.client import MarzbanClient
 from ..services.devices import (
     DEVICE_TYPES,
@@ -24,31 +33,39 @@ from ..services.devices import (
 )
 from ..services.subscriptions import get_or_create_subscription, is_active
 from ..services.users import get_or_create_user, get_user_by_tg_id
+from ..services.happ_proxy import HappProxyConfig, add_install_code
+from ..services.happ_crypto import encrypt_subscription_url
 from ..utils.text import h
 from ..utils.telegram import edit_message_text
 
 router = Router()
 
+HAPP_URL_DEFAULT = "https://example.com/happ"
+
 
 class DeviceStates(StatesGroup):
+    waiting_happ_confirm = State()
     choosing_new_device_name = State()
     renaming_device = State()
 
+
 def _type_title(device_type: str) -> str:
     return DEVICE_TYPES.get(device_type, device_type)
+
 
 async def _show_devices(call_or_message, *, user_id: int) -> None:
     async with session_scope() as session:
         sub = await get_or_create_subscription(session, user_id)
         devices = await list_devices(session, user_id)
 
-    can_add = len([d for d in devices if d.status != 'deleted']) < sub.devices_limit
+    can_add = len([d for d in devices if d.status != "deleted"]) < sub.devices_limit
     text = (
         "📱 <b>Ваши устройства</b>\n\n"
         f"Лимит по тарифу: <b>{sub.devices_limit}</b>\n"
         "Выберите устройство или добавьте новое."
     )
     kb = devices_list_kb(devices, can_add=can_add)
+
     if isinstance(call_or_message, CallbackQuery):
         await edit_message_text(call_or_message, text, reply_markup=kb)
         await call_or_message.answer()
@@ -56,7 +73,7 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
         await call_or_message.answer(text, reply_markup=kb)
 
 
-@router.message(Command('devices'))
+@router.message(Command("devices"))
 async def cmd_devices(message: Message) -> None:
     async with session_scope() as session:
         user = await get_or_create_user(
@@ -67,10 +84,10 @@ async def cmd_devices(message: Message) -> None:
             ref_code=None,
             locale=message.from_user.language_code,
         )
-        await _show_devices(message, user_id=user.id)
+    await _show_devices(message, user_id=user.id)
 
 
-@router.callback_query(F.data == 'devices')
+@router.callback_query(F.data == "devices")
 async def cb_devices(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await get_or_create_user(
@@ -81,36 +98,31 @@ async def cb_devices(call: CallbackQuery) -> None:
             ref_code=None,
             locale=call.from_user.language_code,
         )
-        await _show_devices(call, user_id=user.id)
+    await _show_devices(call, user_id=user.id)
 
 
-@router.callback_query(F.data.startswith('dev:view:'))
+@router.callback_query(F.data.startswith("dev:view:"))
 async def cb_device_view(call: CallbackQuery) -> None:
-    device_id = int(call.data.split(':')[-1])
+    device_id = int(call.data.split(":")[-1])
     async with session_scope() as session:
         device = await get_device(session, device_id)
         if not device or device.user.tg_id != call.from_user.id:
-            await call.answer('Устройство не найдено', show_alert=True)
+            await call.answer("Устройство не найдено", show_alert=True)
             return
-        sub = await get_or_create_subscription(session, device.user_id)
 
-    status = '✅ активно' if device.status == 'active' else ('⛔️ отключено' if device.status == 'disabled' else '🗑 удалено')
+    status = "✅ активно" if device.status == "active" else ("❄️ заморожено" if device.status == "disabled" else "🗑 удалено")
     text = (
         "📲 <b>Устройство</b>\n\n"
         f"Название: <b>{h(device.label)}</b>\n"
-        f"Тип: <b>{h(DEVICE_TYPES.get(device.device_type, device.device_type))}</b>\n"
+        f"Тип: <b>{h(_type_title(device.device_type))}</b>\n"
         f"Статус: <b>{status}</b>\n\n"
         "Действия ниже:"
     )
-    await edit_message_text(
-        call,
-        text,
-        reply_markup=device_menu_kb(device.id, is_active=device.status == 'active'),
-    )
+    await edit_message_text(call, text, reply_markup=device_menu_kb(device.id, is_active=device.status == "active"))
     await call.answer()
 
 
-@router.callback_query(F.data == 'dev:add')
+@router.callback_query(F.data == "dev:add")
 async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
     async with session_scope() as session:
         user = await get_or_create_user(
@@ -124,10 +136,42 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
         sub = await get_or_create_subscription(session, user.id)
         devices = await list_devices(session, user.id)
 
-    if len([d for d in devices if d.status != 'deleted']) >= sub.devices_limit:
-        await call.answer('Лимит устройств исчерпан', show_alert=True)
+    if not is_active(sub):
+        await edit_message_text(
+            call,
+            "⛔️ Для подключения устройства нужна активная подписка.\n\n"
+            "Перейдите в раздел <b>Купить</b> / <b>Управление</b>.",
+            reply_markup=nav_kb(back_cb="buy", home_cb="back"),
+        )
+        await call.answer()
         return
 
+    if len([d for d in devices if d.status != "deleted"]) >= sub.devices_limit:
+        await call.answer("Лимит устройств исчерпан", show_alert=True)
+        await cb_devices(call)
+        return
+
+    await state.clear()
+    await state.set_state(DeviceStates.waiting_happ_confirm)
+
+    happ_url = getattr(settings, "happ_url", None) or HAPP_URL_DEFAULT
+
+    await edit_message_text(
+        call,
+        "🚀 <b>Подключение устройства</b>\n\n"
+        "Сначала откройте приложение/скрипт (Happ).\n"
+        "Затем нажмите <b>«Я открыл приложение»</b>.",
+        reply_markup=device_happ_kb(
+            happ_url=happ_url,
+            continue_cb="dev:happ_ok",
+            back_cb="devices",
+        ),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "dev:happ_ok")
+async def cb_happ_ok(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await edit_message_text(
         call,
@@ -137,19 +181,21 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
 
 
-@router.callback_query(F.data.startswith('dev:type:'))
+@router.callback_query(F.data.startswith("dev:type:"))
 async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
-    device_type = call.data.split(':')[-1]
+    device_type = call.data.split(":")[-1]
     if device_type not in DEVICE_TYPES:
-        await call.answer('Неизвестный тип', show_alert=True)
+        await call.answer("Неизвестный тип", show_alert=True)
         return
+
     await state.set_state(DeviceStates.choosing_new_device_name)
     await state.update_data(device_type=device_type)
+
     await edit_message_text(
         call,
-        "✍️ Отправьте <b>название</b> для устройства (например: <i>Мой iPhone</i>).\n"
-        "\nМожно просто написать: Телефон / ПК / ТВ.",
-        reply_markup=back_kb('devices'),
+        "✍️ Отправьте <b>название</b> устройства (например: <i>Мой iPhone</i>).\n\n"
+        "Можно просто написать: Телефон / ПК / ТВ.",
+        reply_markup=nav_kb(back_cb="dev:add", home_cb="back"),
     )
     await call.answer()
 
@@ -157,10 +203,11 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
 @router.message(DeviceStates.choosing_new_device_name)
 async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
-    device_type = data.get('device_type')
-    label = (message.text or '').strip()
+    device_type = data.get("device_type")
+    label = (message.text or "").strip()
+
     if not label:
-        await message.answer('Отправьте текст с названием устройства.')
+        await message.answer("Отправьте текст с названием устройства.")
         return
 
     async with session_scope() as session:
@@ -173,10 +220,11 @@ async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> 
             locale=message.from_user.language_code,
         )
         sub = await get_or_create_subscription(session, user.id)
+
         if not is_active(sub):
             await message.answer(
                 "⛔️ У вас нет активной подписки.\n\nСначала оформите тариф в разделе <b>Купить</b>.",
-                reply_markup=back_kb('buy'),
+                reply_markup=nav_kb(back_cb="buy", home_cb="back"),
             )
             await state.clear()
             return
@@ -200,59 +248,90 @@ async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> 
             await marz.close()
 
     await state.clear()
+
+    # финальный экран
+    cfg = HappProxyConfig(
+        api_base=settings.happ_proxy_api_base,
+        provider_code=settings.happ_proxy_provider_code,
+        auth_key=settings.happ_proxy_auth_key,
+    )
+
+    # лимит по тарифу (можно сделать 1 на устройство или общий лимит)
+    install_code = await add_install_code(
+        cfg,
+        install_limit=sub.devices_limit,
+        note=f"user={device.user_id} dev={device.id}",
+    )
+
+    limited_url = _with_install_id(device.subscription_url, install_code)
+    crypt_url = await encrypt_subscription_url(limited_url)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Импорт в Happ", url=crypt_url)],
+        [InlineKeyboardButton(text="📲 Открыть Happ", url=str(settings.happ_url))],
+        [InlineKeyboardButton(text="🔗 Показать ссылку", callback_data=f"dev:show_link:{device.id}")],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device.id}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+        ],
+    ])
+
     await message.answer(
-        f"✅ Устройство <b>{h(device.label)}</b> добавлено.\n\nТеперь получите конфиг в меню устройства.",
-        reply_markup=back_kb('devices'),
+        f"✅ Устройство <b>{h(device.label)}</b> добавлено!\n\n"
+        "Теперь получите конфиг и подключитесь 👇",
+        reply_markup=kb,
     )
 
 
-@router.callback_query(F.data.startswith('dev:rename:'))
+@router.callback_query(F.data.startswith("dev:rename:"))
 async def cb_rename_device(call: CallbackQuery, state: FSMContext) -> None:
-    device_id = int(call.data.split(':')[-1])
+    device_id = int(call.data.split(":")[-1])
     await state.set_state(DeviceStates.renaming_device)
     await state.update_data(device_id=device_id)
+
     await edit_message_text(
         call,
         "✏️ Отправьте новое название устройства:",
-        reply_markup=back_kb('devices'),
+        reply_markup=nav_kb(back_cb=f"dev:view:{device_id}", home_cb="back"),
     )
     await call.answer()
 
 
 @router.message(DeviceStates.renaming_device)
 async def msg_rename_device(message: Message, state: FSMContext) -> None:
-    new_name = (message.text or '').strip()
+    new_name = (message.text or "").strip()
     if not new_name:
-        await message.answer('Отправьте текст с названием.')
+        await message.answer("Отправьте текст с названием.")
         return
+
     data = await state.get_data()
-    device_id = int(data.get('device_id'))
+    device_id = int(data.get("device_id"))
 
     async with session_scope() as session:
         device = await get_device(session, device_id)
         if not device or device.user.tg_id != message.from_user.id:
-            await message.answer('Устройство не найдено.')
+            await message.answer("Устройство не найдено.")
             await state.clear()
             return
         await rename_device(session, device, new_name)
 
     await state.clear()
-    await message.answer('✅ Название обновлено.', reply_markup=back_kb('devices'))
+    await message.answer("✅ Название обновлено.", reply_markup=nav_kb(back_cb="devices", home_cb="back"))
 
 
-@router.callback_query(F.data.startswith('dev:cfg:'))
+@router.callback_query(F.data.startswith("dev:cfg:"))
 async def cb_device_cfg(call: CallbackQuery) -> None:
-    device_id = int(call.data.split(':')[-1])
+    device_id = int(call.data.split(":")[-1])
 
     async with session_scope() as session:
         device = await get_device(session, device_id)
         if not device or device.user.tg_id != call.from_user.id:
-            await call.answer('Устройство не найдено', show_alert=True)
+            await call.answer("Устройство не найдено", show_alert=True)
             return
         sub = await get_or_create_subscription(session, device.user_id)
 
     if not is_active(sub):
-        await call.answer('Подписка не активна', show_alert=True)
+        await call.answer("Подписка не активна", show_alert=True)
         return
 
     marz = MarzbanClient(
@@ -262,172 +341,27 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         verify_ssl=settings.marzban_verify_ssl,
     )
     try:
+        link, subscription_url = (None, None)
         if device.marzban_username:
             link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
-        else:
-            link, subscription_url = None, None
     finally:
         await marz.close()
 
-    # Show both (link + subscription) if available
-    btn_rows = []
-    if link:
-        btn_rows.append([
-            {'text': '🔗 Открыть / Импортировать', 'url': link}
-        ])
-    if subscription_url:
-        btn_rows.append([
-            {'text': '📥 Подписка (subscription)', 'url': subscription_url}
-        ])
-    btn_rows.append([
-        {'text': '⬅️ Назад', 'callback_data': f'dev:view:{device_id}'}
-    ])
-
-    # Build InlineKeyboardMarkup manually (avoid extra imports)
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(**btn_rows[0][0])] if btn_rows and 'url' in btn_rows[0][0] else [],
-    ])
-    # Above is messy; we'll build properly below
     rows = []
-    for row in btn_rows:
-        row_btns = []
-        for b in row:
-            if 'url' in b:
-                row_btns.append(InlineKeyboardButton(text=b['text'], url=b['url']))
-            else:
-                row_btns.append(InlineKeyboardButton(text=b['text'], callback_data=b['callback_data']))
-        rows.append(row_btns)
-    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    if link:
+        rows.append([InlineKeyboardButton(text="🔗 Открыть / Импортировать", url=link)])
+    if subscription_url:
+        rows.append([InlineKeyboardButton(text="📥 Подписка (subscription)", url=subscription_url)])
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ])
 
-    link_text = link or subscription_url or '—'
+    shown = link or subscription_url or "—"
     text = (
         "🔗 <b>Конфиг для устройства</b>\n\n"
         "Нажмите кнопку ниже или скопируйте ссылку:\n\n"
-        f"<pre><code>{h(link_text)}</code></pre>"
+        f"<pre><code>{h(shown)}</code></pre>"
     )
-    await edit_message_text(call, text, reply_markup=kb)
-    await call.answer()
-
-
-# Placeholders for toggle/delete (implemented later)
-
-
-@router.callback_query(F.data.startswith('dev:toggle:'))
-async def cb_dev_toggle(call: CallbackQuery, bot: Bot) -> None:
-    device_id = int(call.data.split(':', 2)[2])
-    async with session_scope() as session:
-        user = await get_user_by_tg_id(session, call.from_user.id)
-        if not user:
-            await call.answer('Сначала /start', show_alert=True)
-            return
-        device = await get_device(session, device_id)
-        if not device or device.user_id != user.id:
-            await call.answer('Устройство не найдено', show_alert=True)
-            return
-
-        sub = await get_or_create_subscription(session, user.id)
-
-        marz = MarzbanClient(
-            base_url=str(settings.marzban_base_url),
-            username=settings.marzban_username,
-            password=settings.marzban_password,
-            verify_ssl=settings.marzban_verify_ssl,
-        )
-        try:
-            if device.status == 'active':
-                # Disable
-                try:
-                    await marz.update_user(username=device.marzban_username, status='disabled')
-                except Exception:
-                    pass
-                device.status = 'disabled'
-                session.add(device)
-                await session.commit()
-                await call.answer('Отключено')
-            else:
-                if not is_active(sub):
-                    await call.answer('Подписка не активна', show_alert=True)
-                    return
-                active_cnt = await count_active_devices(session, user.id)
-                if active_cnt >= sub.devices_limit:
-                    await call.answer('Достигнут лимит устройств. Купите план выше.', show_alert=True)
-                    return
-                exp_ts = int(sub.expires_at.timestamp()) if sub.expires_at else 0
-                try:
-                    await marz.update_user(username=device.marzban_username, status='active', expire=exp_ts)
-                except Exception:
-                    pass
-                device.status = 'active'
-                session.add(device)
-                await session.commit()
-                await call.answer('Включено')
-        finally:
-            await marz.close()
-
-    # Refresh device view
-    await _show_device_view(call, device_id)
-
-
-@router.callback_query(F.data.startswith('dev:delete:'))
-async def cb_dev_delete(call: CallbackQuery, bot: Bot) -> None:
-    device_id = int(call.data.split(':', 2)[2])
-    async with session_scope() as session:
-        user = await get_user_by_tg_id(session, call.from_user.id)
-        if not user:
-            await call.answer('Сначала /start', show_alert=True)
-            return
-        device = await get_device(session, device_id)
-        if not device or device.user_id != user.id:
-            await call.answer('Устройство не найдено', show_alert=True)
-            return
-
-        marz = MarzbanClient(
-            base_url=str(settings.marzban_base_url),
-            username=settings.marzban_username,
-            password=settings.marzban_password,
-            verify_ssl=settings.marzban_verify_ssl,
-        )
-        try:
-            # Safer than delete: just disable
-            try:
-                await marz.update_user(username=device.marzban_username, status='disabled')
-            except Exception:
-                pass
-        finally:
-            await marz.close()
-
-        device.status = 'deleted'
-        session.add(device)
-        await session.commit()
-
-    await call.answer('Удалено')
-    # Back to list
-    await cb_devices(call)
-
-
-async def _show_device_view(call: CallbackQuery, device_id: int) -> None:
-    """Render device screen without relying on call.data format."""
-    async with session_scope() as session:
-        user = await get_user_by_tg_id(session, call.from_user.id)
-        if not user:
-            await call.answer('Сначала /start', show_alert=True)
-            return
-        device = await get_device(session, device_id)
-        if not device or device.user_id != user.id:
-            await call.answer('Устройство не найдено', show_alert=True)
-            return
-
-    status = '✅ Активно' if device.status == 'active' else ('⛔️ Выключено' if device.status == 'disabled' else '🗑 Удалено')
-    text = (
-        f"<b>Устройство #{device.slot}</b>\n"
-        f"Тип: {_type_title(device.device_type)}\n"
-        f"Имя: <b>{h(device.label)}</b>\n"
-        f"Статус: {status}"
-    )
-    await edit_message_text(
-        call,
-        text,
-        reply_markup=device_menu_kb(device_id, is_active=device.status == 'active'),
-    )
+    await edit_message_text(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await call.answer()

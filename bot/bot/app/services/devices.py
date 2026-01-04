@@ -107,6 +107,12 @@ async def create_device(
     session.add(device)
     await session.commit()
     await session.refresh(device)
+    user.last_device_id = device.id
+    user.last_device_type = device.device_type
+    user.last_device_label = device.label
+    session.add(user)
+    await session.commit()
+
     return device
 
 
@@ -192,3 +198,9 @@ async def get_device_connection_links(marz: MarzbanClient, marzban_username: str
     sub_url = u.get('subscription_url')
     link = links[0] if links else None
     return link, sub_url
+
+async def reissue_device_config(*, session: AsyncSession, marz: MarzbanClient, device: Device) -> None:
+    if not device.marzban_username:
+        raise ValueError("device_has_no_marzban_username")
+    await marz.revoke_subscription(device.marzban_username)
+    # ничего больше не нужно: новые ссылки будут валидны при повторном запросе конфига

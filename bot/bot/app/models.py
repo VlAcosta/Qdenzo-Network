@@ -37,6 +37,11 @@ class User(Base):
     devices: Mapped[list['Device']] = relationship('Device', back_populates='user')
     orders: Mapped[list['Order']] = relationship('Order', back_populates='user')
 
+    last_device_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_device_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_device_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'

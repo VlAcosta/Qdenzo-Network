@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
-from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import FSInputFile, CallbackQuery, Message
+from aiogram.types import FSInputFile, Message
+from aiogram import Router
 
 from ..config import settings
 from ..db import session_scope
@@ -12,19 +10,25 @@ from ..keyboards.main import main_menu
 from ..services.subscriptions import is_active
 from ..services import get_or_create_subscription
 from ..services.users import get_or_create_user
-from ..utils.telegram import edit_message_text
 from ..utils.text import h
 
 router = Router()
 
 
+def _parse_ref(message: Message) -> str | None:
+    if not message.text:
+        return None
+    if " " not in message.text:
+        return None
+    _, arg = message.text.split(" ", 1)
+    if arg.startswith("ref_"):
+        return arg.replace("ref_", "", 1)
+    return None
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    ref = None
-    if message.text and ' ' in message.text:
-        _, arg = message.text.split(' ', 1)
-        if arg.startswith('ref_'):
-            ref = arg.replace('ref_', '', 1)
+    ref = _parse_ref(message)
 
     async with session_scope() as session:
         user = await get_or_create_user(
@@ -35,20 +39,22 @@ async def cmd_start(message: Message) -> None:
             ref_code=ref,
             locale=message.from_user.language_code,
         )
-        sub = await get_or_create_subscription(session, user.id)
         if user.is_banned:
             await message.answer(
-                '⛔️ Доступ к боту ограничен.\nЕсли это ошибка — напишите в поддержку: ' + h(settings.support_username)
+                "⛔️ Доступ к боту ограничен.\n"
+                "Если это ошибка — напишите в поддержку: " + h(settings.support_username)
             )
             return
 
-        caption = (
-            f"👋 Добро пожаловать в <b>{h(settings.brand_name)}</b>\n\n"
-            f"Выберите действие ниже 👇\n"
-            f"<i>Поддержка:</i> {h(settings.support_username)}"
-        )
+        sub = await get_or_create_subscription(session, user.id)
+        has_sub = is_active(sub)
 
-    # Send photo if configured (path can be relative to /app/bot via settings.start_photo_path)
+    caption = (
+        f"👋 Добро пожаловать в <b>{h(settings.brand_name)}</b>\n\n"
+        "Выберите действие ниже 👇\n\n"
+        f"<i>Поддержка:</i> {h(settings.support_username)}"
+    )
+
     photo_path = settings.start_photo_path
     if photo_path:
         try:
@@ -56,17 +62,19 @@ async def cmd_start(message: Message) -> None:
             await message.answer_photo(
                 photo=photo,
                 caption=caption,
-                reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
+                reply_markup=main_menu(user.is_admin, has_subscription=has_sub),
             )
             return
         except Exception:
-            # fall back to text
             pass
 
-    await message.answer(caption, reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)))
+    await message.answer(
+        caption,
+        reply_markup=main_menu(user.is_admin, has_subscription=has_sub),
+    )
 
 
-@router.message(Command('menu'))
+@router.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
     async with session_scope() as session:
         user = await get_or_create_user(
@@ -78,28 +86,8 @@ async def cmd_menu(message: Message) -> None:
             locale=message.from_user.language_code,
         )
         sub = await get_or_create_subscription(session, user.id)
-        if user.is_banned:
-            await message.answer('⛔️ Доступ к боту ограничен.')
-            return
-    text = f"🏠 <b>Меню {h(settings.brand_name)}</b>"
-    await message.answer(text, reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)))
 
-
-@router.callback_query(F.data == 'back')
-async def cb_back(call: CallbackQuery) -> None:
-    async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
-    sub = await get_or_create_subscription(session, user.id)
-    await edit_message_text(
-        call,
-        f"🏠 <b>Меню {h(settings.brand_name)}</b>",
+    await message.answer(
+        f"🏠 <b>{h(settings.brand_name)}</b>\n\nВыберите действие 👇",
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
-    await call.answer()
