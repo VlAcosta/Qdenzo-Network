@@ -8,17 +8,15 @@ def buy_manage_kb() -> InlineKeyboardMarkup:
     Хаб управления (когда подписка активна).
     """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 Мои устройства", callback_data="devices")],
-        [InlineKeyboardButton(text="➕ Подключить устройство", callback_data="dev:add")],
-        [
-            InlineKeyboardButton(text="📦 Подписка", callback_data="sub"),
-            InlineKeyboardButton(text="📊 Трафик", callback_data="traffic"),
-        ],
+        [InlineKeyboardButton(text="📱 Менеджер устройств", callback_data="devices")],
+        [InlineKeyboardButton(text="📦 Тариф", callback_data="sub")],
         [InlineKeyboardButton(text="🧠 Режимы", callback_data="modes")],
+        [InlineKeyboardButton(text="📊 Трафик", callback_data="traffic")],
         [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="back"),
-            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+            InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
+            InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
         ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
     ])
 
 

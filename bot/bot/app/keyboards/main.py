@@ -9,15 +9,18 @@ def main_menu(is_admin: bool, *, has_subscription: bool) -> InlineKeyboardMarkup
     - На старте НЕ показываем Устройства/Режимы/Трафик/Рефералы
     - Только: Управление(если активна)/Купить(если нет), Поддержка, FAQ (+ Admin)
     """
-    first = "⚙️ Управление" if has_subscription else "🛒 Купить"
+    rows = []
 
-    rows = [
-        [InlineKeyboardButton(text=first, callback_data="buy")],
-        [
-            InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
-            InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
-        ],
-    ]
+    if has_subscription:
+        rows.append([InlineKeyboardButton(text="⚙️ Управление", callback_data="buy")])
+        rows.append([InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="buy:plans")])
+    else:
+        rows.append([InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="buy")])
+
+    rows.append([
+        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
+        InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
+    ])
     if is_admin:
         rows.append([InlineKeyboardButton(text="🛠 Admin", callback_data="admin")])
 

@@ -9,6 +9,7 @@ from aiogram.types import LabeledPrice, PreCheckoutQuery
 from loguru import logger
 
 from ..marzban.client import MarzbanClient
+from ..models import Order
 from ..services.orders import mark_order_paid
 from ..services.catalog import get_plan_option
 from ..services.payments import (
