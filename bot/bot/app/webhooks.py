@@ -67,7 +67,8 @@ async def _process_paid_order(order_id: int, *, provider: str, provider_id: str 
 
 
 async def _handle_cryptopay(invoice_id: int | None, payload_raw: str | None) -> None:
-    if not settings.cryptopay_token or not invoice_id:
+    cryptopay_token = getattr(settings, "cryptopay_token", None)
+    if not cryptopay_token or not invoice_id:
         return
 
     order_id = None
@@ -78,7 +79,7 @@ async def _handle_cryptopay(invoice_id: int | None, payload_raw: str | None) -> 
         except Exception:
             order_id = None
 
-    client = CryptoPayClient(settings.cryptopay_token)
+    client = CryptoPayClient(cryptopay_token)
     invoice = await client.get_invoice(int(invoice_id))
     if not invoice or not is_cryptopay_paid(invoice.status):
         return
@@ -87,7 +88,9 @@ async def _handle_cryptopay(invoice_id: int | None, payload_raw: str | None) -> 
 
 
 async def _handle_yookassa(payment_id: str | None, metadata: dict[str, Any] | None) -> None:
-    if not (settings.yookassa_shop_id and settings.yookassa_secret_key and payment_id):
+    shop_id = getattr(settings, "yookassa_shop_id", None)
+    secret_key = getattr(settings, "yookassa_secret_key", None)
+    if not (shop_id and secret_key and payment_id):
         return
 
     order_id = None
@@ -97,7 +100,7 @@ async def _handle_yookassa(payment_id: str | None, metadata: dict[str, Any] | No
         except Exception:
             order_id = None
 
-    client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
+    client = YooKassaClient(shop_id, secret_key)
     payment = await client.get_payment(payment_id)
     if not is_yookassa_paid(payment.status):
         return
@@ -107,13 +110,15 @@ async def _handle_yookassa(payment_id: str | None, metadata: dict[str, Any] | No
 
 async def cryptopay_webhook(request: web.Request) -> web.Response:
     secret = request.match_info.get("secret")
-    if settings.cryptopay_webhook_path_secret and secret != settings.cryptopay_webhook_path_secret:
+    webhook_path_secret = getattr(settings, "cryptopay_webhook_path_secret", None)
+    webhook_secret = getattr(settings, "cryptopay_webhook_secret", None)
+    if webhook_path_secret and secret != webhook_path_secret:
         return web.Response(status=404)
 
     body = await request.read()
-    if settings.cryptopay_webhook_secret:
+    if webhook_secret:
         signature = request.headers.get("Crypto-Pay-API-Signature")
-        if not verify_webhook_signature(token=settings.cryptopay_webhook_secret, body=body, signature=signature):
+        if not verify_webhook_signature(token=webhook_secret, body=body, signature=signature):
             logger.warning("CryptoPay webhook signature mismatch")
             return web.Response(text="ok")
 
@@ -135,7 +140,8 @@ async def cryptopay_webhook(request: web.Request) -> web.Response:
 
 async def yookassa_webhook(request: web.Request) -> web.Response:
     secret = request.match_info.get("secret")
-    if settings.yookassa_webhook_path_secret and secret != settings.yookassa_webhook_path_secret:
+    webhook_path_secret = getattr(settings, "yookassa_webhook_path_secret", None)
+    if webhook_path_secret and secret != webhook_path_secret:
         return web.Response(status=404)
 
     try:

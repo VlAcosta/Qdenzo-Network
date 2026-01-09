@@ -38,7 +38,8 @@ async def cb_back(call: CallbackQuery) -> None:
 
     await edit_message_text(
         call,
-        f"🏠 <b>{h(settings.brand_name)}</b>\n\nВыберите действие 👇",
+        f"🏠 <b>Главное меню</b> (ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>)\n\n"
+        "Выберите действие 👇",
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
     await call.answer()

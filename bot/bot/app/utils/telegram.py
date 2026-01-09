@@ -16,3 +16,11 @@ async def edit_message_text(event: CallbackQuery | Message, text: str, reply_mar
         return
 
     await message.answer(text, reply_markup=reply_markup)
+
+
+async def safe_answer(call: CallbackQuery, **kwargs: Any) -> None:
+    """Answer callback safely (ignore expired queries)."""
+    try:
+        await call.answer(**kwargs)
+    except Exception:
+        return

@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..config import settings
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
 from ..keyboards.support import support_kb
@@ -38,7 +38,7 @@ _TEXT = (
 @router.callback_query(F.data == 'support')
 async def cb_support(call: CallbackQuery) -> None:
     await edit_message_text(call, _TEXT, reply_markup=support_kb())
-    await call.answer()
+    await safe_answer(call)
 
 
 @router.message(Command('support'))
@@ -54,7 +54,7 @@ async def cb_support_chat(call: CallbackQuery) -> None:
         f"Напишите оператору: {settings.support_username}\n\n{url}",
         reply_markup=_kb(),
     )
-    await call.answer()
+    await safe_answer(call)
 
 
 @router.callback_query(F.data == 'support:diag')
@@ -77,4 +77,4 @@ async def cb_support_diag(call: CallbackQuery) -> None:
         "Если конфиг не работает — проверьте статус устройства и повторно импортируйте ссылку."
     )
     await edit_message_text(call, text, reply_markup=support_kb())
-    await call.answer()
+    await safe_answer(call)

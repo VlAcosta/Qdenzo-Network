@@ -27,9 +27,10 @@ from ..keyboards.buy import buy_manage_kb, trial_activated_kb
 from ..keyboards.orders import order_payment_kb
 from ..keyboards.plans import plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
+from ..services.devices import count_active_devices
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import get_or_create_user
-from ..utils.text import h
+from ..utils.text import fmt_dt, h
 from ..utils.telegram import edit_message_text
 
 
@@ -47,11 +48,24 @@ def _marzban_client() -> MarzbanClient:
 
 
 def _yookassa_enabled() -> bool:
-    return bool(settings.yookassa_shop_id and settings.yookassa_secret_key and settings.yookassa_return_url)
+    return bool(
+        getattr(settings, "yookassa_shop_id", None)
+        and getattr(settings, "yookassa_secret_key", None)
+        and getattr(settings, "yookassa_return_url", None)
+    )
 
 
 def _cryptopay_enabled() -> bool:
-    return bool(settings.cryptopay_token)
+    return bool(getattr(settings, "cryptopay_token", None))
+
+
+def _traffic_limit_gb(plan_code: str) -> int:
+    return {
+        "trial": settings.traffic_limit_trial_gb,
+        "start": settings.traffic_limit_start_gb,
+        "pro": settings.traffic_limit_pro_gb,
+        "family": settings.traffic_limit_family_gb,
+    }.get(plan_code, 0)
 
 
 
@@ -117,11 +131,18 @@ async def cb_buy(call: CallbackQuery) -> None:
             locale=call.from_user.language_code,
         )
         sub = await get_or_create_subscription(session, user.id)
+        devices_active = await count_active_devices(session, user.id)
 
     if is_active(sub):
+        traffic_limit = _traffic_limit_gb(sub.plan_code)
         await edit_message_text(
             call,
-            "⚙️ <b>Qdenzo Network — управление сервисом</b>\n\nВыберите действие 👇",
+            "⚙️ <b>Управление</b> "
+            f"(ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>, "
+            f"Дата окончания подписки: <b>{fmt_dt(sub.expires_at)}</b>, "
+            f"Трафик: <b>0/{traffic_limit} GB</b>, "
+            f"Активных устройств: <b>{devices_active}</b>)\n\n"
+            "Выберите действие 👇",
             reply_markup=buy_manage_kb(),
         )
         await call.answer()
@@ -220,12 +241,15 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
         if meta.get("provider") == "yookassa" and meta.get("pay_url"):
             pay_url = meta["pay_url"]
         else:
-            client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
+            shop_id = getattr(settings, "yookassa_shop_id", None)
+            secret_key = getattr(settings, "yookassa_secret_key", None)
+            return_url = getattr(settings, "yookassa_return_url", None)
+            client = YooKassaClient(shop_id, secret_key)
             try:
                 payment = await client.create_payment(
                     amount_rub=order.amount_rub,
                     description=f"Заказ #{order.id}",
-                    return_url=settings.yookassa_return_url,
+                    return_url=return_url,
                     metadata={"order_id": order.id, "tg_id": call.from_user.id},
                 )
             except Exception:
@@ -281,13 +305,14 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
         if meta.get("provider") == "cryptopay" and meta.get("pay_url"):
             pay_url = meta["pay_url"]
         else:
-            client = CryptoPayClient(settings.cryptopay_token)
+            cryptopay_token = getattr(settings, "cryptopay_token", None)
+            client = CryptoPayClient(cryptopay_token)
             payload = json.dumps({"order_id": order.id, "tg_id": call.from_user.id})
             amount = str(order.amount_rub)  # TODO: convert RUB to CryptoPay asset amount.
             try:
                 invoice = await client.create_invoice(
                     amount=amount,
-                    asset=settings.cryptopay_asset,
+                    asset=getattr(settings, "cryptopay_asset", "USDT"),
                     description=f"Заказ #{order.id}",
                     payload=payload,
                 )
@@ -346,7 +371,8 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             if not invoice_id:
                 await call.answer("Счет не найден.", show_alert=True)
                 return
-            client = CryptoPayClient(settings.cryptopay_token)
+            cryptopay_token = getattr(settings, "cryptopay_token", None)
+            client = CryptoPayClient(cryptopay_token)
             invoice = await client.get_invoice(int(invoice_id))
             if not invoice or not is_cryptopay_paid(invoice.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)
@@ -359,7 +385,9 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             if not payment_id:
                 await call.answer("Платеж не найден.", show_alert=True)
                 return
-            client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
+            shop_id = getattr(settings, "yookassa_shop_id", None)
+            secret_key = getattr(settings, "yookassa_secret_key", None)
+            client = YooKassaClient(shop_id, secret_key)
             payment = await client.get_payment(str(payment_id))
             if not is_yookassa_paid(payment.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)

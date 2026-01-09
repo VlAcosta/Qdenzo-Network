@@ -50,7 +50,7 @@ async def cmd_start(message: Message) -> None:
         has_sub = is_active(sub)
 
     caption = (
-        f"👋 Добро пожаловать в <b>{h(settings.brand_name)}</b>\n\n"
+        f"🏠 <b>Главное меню</b> (ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>)\n\n"
         "Выберите действие ниже 👇\n\n"
         f"<i>Поддержка:</i> {h(settings.support_username)}"
     )
@@ -88,6 +88,7 @@ async def cmd_menu(message: Message) -> None:
         sub = await get_or_create_subscription(session, user.id)
 
     await message.answer(
-        f"🏠 <b>{h(settings.brand_name)}</b>\n\nВыберите действие 👇",
+        f"🏠 <b>Главное меню</b> (ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>)\n\n"
+        "Выберите действие 👇",
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
