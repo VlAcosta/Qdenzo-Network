@@ -104,6 +104,9 @@ class Settings(BaseSettings):
             except ValueError:
                 continue
         return ids
+    
+    payment_stars_enabled: bool = Field(True, alias="PAYMENT_STARS_ENABLED")
+    stars_per_rub: float = Field(1.0, alias="STARS_PER_RUB")
 
 
 @lru_cache(maxsize=1)
