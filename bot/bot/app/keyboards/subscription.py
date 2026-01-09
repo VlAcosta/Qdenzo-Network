@@ -8,8 +8,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 def subscription_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text='🔄 Продлить', callback_data='buy:plans'),
-            InlineKeyboardButton(text='🛠 Сменить тариф', callback_data='buy:plans'),
+            InlineKeyboardButton(text='🔄 Продлить', callback_data='sub:renew'),
+            InlineKeyboardButton(text='🛠 Сменить тариф', callback_data='sub:change'),
         ],
         [InlineKeyboardButton(text='🧾 История оплат', callback_data='sub:history')],
         [

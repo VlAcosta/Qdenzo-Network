@@ -1,14 +1,24 @@
 # -*- coding: utf-8 -*-
+import json
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, User
 
 from aiogram.types import LabeledPrice, PreCheckoutQuery
+from loguru import logger
+
 from ..marzban.client import MarzbanClient
 from ..services.orders import mark_order_paid
 from ..services.catalog import get_plan_option
-
+from ..services.payments import (
+    CryptoPayClient,
+    YooKassaClient,
+    is_cryptopay_paid,
+    is_yookassa_paid,
+    load_order_meta,
+    update_order_meta,
+)
 
 from ..config import settings
 from ..db import session_scope
@@ -16,7 +26,6 @@ from ..keyboards.buy import buy_manage_kb, trial_activated_kb
 from ..keyboards.orders import order_payment_kb
 from ..keyboards.plans import plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
-from ..services.catalog import get_plan_option
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import get_or_create_user
 from ..utils.text import h
@@ -25,6 +34,24 @@ from ..utils.telegram import edit_message_text
 
 
 router = Router()
+
+
+def _marzban_client() -> MarzbanClient:
+    return MarzbanClient(
+        base_url=str(settings.marzban_base_url),
+        username=settings.marzban_username,
+        password=settings.marzban_password,
+        verify_ssl=settings.marzban_verify_ssl,
+    )
+
+
+def _yookassa_enabled() -> bool:
+    return bool(settings.yookassa_shop_id and settings.yookassa_secret_key and settings.yookassa_return_url)
+
+
+def _cryptopay_enabled() -> bool:
+    return bool(settings.cryptopay_token)
+
 
 
 def _plan_choice_text(code: str, months: int) -> str:
@@ -49,6 +76,23 @@ async def _notify_admins(bot: Bot, text: str, reply_markup=None) -> None:
             await bot.send_message(admin_id, text, reply_markup=reply_markup)
         except Exception:
             pass
+
+async def _get_order_for_user(session, order_id: int, user: User) -> Order | None:
+    order = await get_order(session, order_id)
+    if not order:
+        return None
+    db_user = await get_or_create_user(
+        session=session,
+        tg_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        ref_code=None,
+        locale=getattr(user, "language_code", None),
+    )
+    if order.user_id != db_user.id:
+        return None
+    return order
+
 
 
 @router.message(Command("buy"))
@@ -121,21 +165,25 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             return
 
         opt = get_plan_option(code, months)
-        order = await create_subscription_order(session, user.id, code, months, opt.price_rub, payment_method="manual")
+        order = await create_subscription_order(session, user.id, code, months, payment_method="manual")
 
     text = _plan_choice_text(code, months)
-    text += "\n<b>Оплата:</b> сейчас <i>Manual</i> (админ подтверждает).\n"
-    text += "После оплаты нажмите <b>Я оплатил</b> и отправьте чек/скрин в поддержку.\n\n"
+    text += "\n<b>Оплата:</b> выберите способ ниже.\n"
+    if settings.payment_manual_enabled:
+        text += f"{h(settings.manual_payment_text)}\n\n"
     text += f"Поддержка: {h(settings.support_username)}"
 
     await edit_message_text(
         call,
         text,
         reply_markup=order_payment_kb(
-            order_id,
+            order.id,
+            yookassa_enabled=_yookassa_enabled(),
             yookassa_url=settings.yookassa_pay_url,
+            crypto_enabled=_cryptopay_enabled(),
             crypto_url=settings.crypto_pay_url,
             stars_enabled=settings.payment_stars_enabled,
+            manual_enabled=settings.payment_manual_enabled,
         )
     )
 
@@ -149,6 +197,183 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
     from ..keyboards.admin import admin_order_action_kb
     await _notify_admins(bot, admin_text, reply_markup=admin_order_action_kb(order.id))
 
+    await call.answer()
+
+@router.callback_query(F.data.startswith("pay:yookassa:"))
+async def cb_pay_yookassa(call: CallbackQuery) -> None:
+    if not _yookassa_enabled():
+        await call.answer("YooKassa не настроена.", show_alert=True)
+        return
+
+    order_id = int(call.data.split(":", 2)[2])
+    async with session_scope() as session:
+        order = await _get_order_for_user(session, order_id, call.from_user)
+        if not order:
+            await call.answer("Заказ не найден", show_alert=True)
+            return
+        if order.status != "pending":
+            await call.answer("Заказ уже обработан", show_alert=True)
+            return
+
+        meta = load_order_meta(order)
+        if meta.get("provider") == "yookassa" and meta.get("pay_url"):
+            pay_url = meta["pay_url"]
+        else:
+            client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
+            try:
+                payment = await client.create_payment(
+                    amount_rub=order.amount_rub,
+                    description=f"Заказ #{order.id}",
+                    return_url=settings.yookassa_return_url,
+                    metadata={"order_id": order.id, "tg_id": call.from_user.id},
+                )
+            except Exception:
+                logger.exception("Failed to create YooKassa payment for order %s", order.id)
+                await call.answer("Не удалось создать платеж. Попробуйте позже.", show_alert=True)
+                return
+
+            pay_url = payment.confirmation_url
+            update_order_meta(
+                order,
+                {
+                    "provider": "yookassa",
+                    "provider_payment_id": payment.payment_id,
+                    "pay_url": pay_url,
+                    "amount": order.amount_rub,
+                    "currency": "RUB",
+                    "metadata": {"order_id": order.id, "tg_id": call.from_user.id},
+                },
+            )
+            order.payment_method = "yookassa"
+            session.add(order)
+            await session.commit()
+
+    if not pay_url:
+        await call.answer("Не удалось получить ссылку оплаты.", show_alert=True)
+        return
+
+    await edit_message_text(
+        call,
+        "💳 Счёт YooKassa создан. Нажмите кнопку ниже для оплаты.",
+        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("pay:cryptopay:"))
+async def cb_pay_cryptopay(call: CallbackQuery) -> None:
+    if not _cryptopay_enabled():
+        await call.answer("Crypto Pay не настроен.", show_alert=True)
+        return
+
+    order_id = int(call.data.split(":", 2)[2])
+    async with session_scope() as session:
+        order = await _get_order_for_user(session, order_id, call.from_user)
+        if not order:
+            await call.answer("Заказ не найден", show_alert=True)
+            return
+        if order.status != "pending":
+            await call.answer("Заказ уже обработан", show_alert=True)
+            return
+
+        meta = load_order_meta(order)
+        if meta.get("provider") == "cryptopay" and meta.get("pay_url"):
+            pay_url = meta["pay_url"]
+        else:
+            client = CryptoPayClient(settings.cryptopay_token)
+            payload = json.dumps({"order_id": order.id, "tg_id": call.from_user.id})
+            amount = str(order.amount_rub)  # TODO: convert RUB to CryptoPay asset amount.
+            try:
+                invoice = await client.create_invoice(
+                    amount=amount,
+                    asset=settings.cryptopay_asset,
+                    description=f"Заказ #{order.id}",
+                    payload=payload,
+                )
+            except Exception:
+                logger.exception("Failed to create CryptoPay invoice for order %s", order.id)
+                await call.answer("Не удалось создать счет. Попробуйте позже.", show_alert=True)
+                return
+
+            pay_url = invoice.pay_url
+            update_order_meta(
+                order,
+                {
+                    "provider": "cryptopay",
+                    "provider_invoice_id": invoice.invoice_id,
+                    "pay_url": pay_url,
+                    "amount": amount,
+                    "currency": settings.cryptopay_asset,
+                    "metadata": {"order_id": order.id, "tg_id": call.from_user.id},
+                },
+            )
+            order.payment_method = "cryptopay"
+            session.add(order)
+            await session.commit()
+
+    if not pay_url:
+        await call.answer("Не удалось получить ссылку оплаты.", show_alert=True)
+        return
+
+    await edit_message_text(
+        call,
+        "🪙 Счёт Crypto Pay создан. Нажмите кнопку ниже для оплаты.",
+        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("check:"))
+async def cb_check_payment(call: CallbackQuery) -> None:
+    order_id = int(call.data.split(":", 1)[1])
+    async with session_scope() as session:
+        order = await _get_order_for_user(session, order_id, call.from_user)
+        if not order:
+            await call.answer("Заказ не найден", show_alert=True)
+            return
+        if order.status != "pending":
+            await call.answer("Заказ уже обработан", show_alert=True)
+            return
+
+        meta = load_order_meta(order)
+        provider = meta.get("provider")
+        if provider == "cryptopay":
+            if not _cryptopay_enabled():
+                await call.answer("Crypto Pay не настроен.", show_alert=True)
+                return
+            invoice_id = meta.get("provider_invoice_id")
+            if not invoice_id:
+                await call.answer("Счет не найден.", show_alert=True)
+                return
+            client = CryptoPayClient(settings.cryptopay_token)
+            invoice = await client.get_invoice(int(invoice_id))
+            if not invoice or not is_cryptopay_paid(invoice.status):
+                await call.answer("Оплата еще не подтверждена.", show_alert=True)
+                return
+        elif provider == "yookassa":
+            if not _yookassa_enabled():
+                await call.answer("YooKassa не настроена.", show_alert=True)
+                return
+            payment_id = meta.get("provider_payment_id")
+            if not payment_id:
+                await call.answer("Платеж не найден.", show_alert=True)
+                return
+            client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
+            payment = await client.get_payment(str(payment_id))
+            if not is_yookassa_paid(payment.status):
+                await call.answer("Оплата еще не подтверждена.", show_alert=True)
+                return
+        else:
+            await call.answer("Автоплатеж для заказа не настроен.", show_alert=True)
+            return
+
+        marz = _marzban_client()
+        new_exp, _ = await mark_order_paid(session=session, marz=marz, order=order)
+
+    await edit_message_text(
+        call,
+        f"✅ Оплата подтверждена!\nПодписка активирована до: {new_exp:%Y-%m-%d %H:%M} UTC\nЗаказ #{order_id}",
+    )
     await call.answer()
 
 
@@ -175,7 +400,10 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
         if order.status != "pending":
             await call.answer("Заказ уже обработан", show_alert=True)
             return
-
+        if order.payment_method != "manual" or not settings.payment_manual_enabled:
+            await call.answer("Этот способ оплаты обрабатывается автоматически.", show_alert=True)
+            return
+        
     from ..keyboards.admin import admin_order_action_kb
 
     await _notify_admins(

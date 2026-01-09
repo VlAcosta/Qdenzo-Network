@@ -26,6 +26,7 @@ from .handlers.faq import router as faq_router
 from .handlers.admin import router as admin_router
 from .handlers.navigation import router as nav_router
 from .handlers.fallback import router as fallback_router
+from .webhooks import start_webhook_server, stop_webhook_server
 
 
 def _build_dp() -> Dispatcher:
@@ -57,10 +58,11 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = _build_dp()
-
+    webhook_runner = await start_webhook_server()
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        await stop_webhook_server(webhook_runner)
         await bot.session.close()
 
 

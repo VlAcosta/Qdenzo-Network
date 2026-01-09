@@ -29,6 +29,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "8080:8080"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-qdenzo}:${POSTGRES_PASSWORD:-qdenzo_password}@db:5432/${POSTGRES_DB:-qdenzo}
     depends_on:

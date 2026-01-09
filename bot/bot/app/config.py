@@ -63,6 +63,9 @@ class Settings(BaseSettings):
         alias='MANUAL_PAYMENT_TEXT'
     )
 
+    webhook_host: str = Field('0.0.0.0', alias='WEBHOOK_HOST')
+    webhook_port: int = Field(8080, alias='WEBHOOK_PORT')
+
     # External payment links (optional)
     yookassa_pay_url: str | None = Field(None, alias='YOOKASSA_PAY_URL')
     crypto_pay_url: str | None = Field(None, alias='CRYPTO_PAY_URL')

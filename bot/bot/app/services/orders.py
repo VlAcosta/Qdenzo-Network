@@ -17,14 +17,14 @@ from .subscriptions import apply_plan_purchase, get_or_create_subscription, is_a
 
 async def create_subscription_order(
     session: AsyncSession,
-    user: User,
+    user_id: int,
     plan_code: str,
     months: int,
     payment_method: str = 'manual',
 ) -> Order:
     opt = get_plan_option(plan_code, months)
     order = Order(
-        user_id=user.id,
+        user_id=user_id,
         kind='subscription',
         plan_code=plan_code,
         months=months,

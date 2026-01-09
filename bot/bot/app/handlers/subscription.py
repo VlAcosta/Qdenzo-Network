@@ -10,8 +10,10 @@ from aiogram.types import CallbackQuery, Message
 
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
+from ..keyboards.plans import plan_options_kb
 from ..keyboards.subscription import subscription_kb
 from ..services import get_or_create_subscription
+from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
 from ..services.devices import count_active_devices
 from ..services.users import get_or_create_user
 from ..utils.telegram import edit_message_text
@@ -95,6 +97,54 @@ async def cb_sub(call: CallbackQuery) -> None:
     await edit_message_text(call, text, reply_markup=subscription_kb())
     await call.answer()
     
+
+@router.callback_query(F.data == 'sub:renew')
+async def cb_sub_renew(call: CallbackQuery) -> None:
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        sub = await get_or_create_subscription(session, user.id)
+
+    options = [opt for opt in list_plan_options_by_code(sub.plan_code) if opt.months > 0]
+    text = (
+        f"🔄 <b>Продлить подписку</b>\n\n"
+        f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
+        f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
+        "Продлить на:"
+    )
+    await edit_message_text(call, text, reply_markup=plan_options_kb(options, back_cb="sub"))
+    await call.answer()
+
+
+@router.callback_query(F.data == 'sub:change')
+async def cb_sub_change(call: CallbackQuery) -> None:
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        sub = await get_or_create_subscription(session, user.id)
+
+    options = [opt for opt in plan_options(include_trial=False) if opt.code != sub.plan_code]
+    text = (
+        f"🛠 <b>Сменить тариф</b>\n\n"
+        f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
+        f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
+        "Сменить тариф: выберите новый 👇"
+    )
+    await edit_message_text(call, text, reply_markup=plan_options_kb(options, back_cb="sub"))
+    await call.answer()
+
 @router.callback_query(F.data == 'sub:history')
 async def cb_sub_history(call: CallbackQuery) -> None:
     await edit_message_text(call, "История оплат появится здесь позже.", reply_markup=nav_kb(back_cb='sub', home_cb='back'))
