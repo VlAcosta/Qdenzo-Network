@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import datetime
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,8 @@ async def create_subscription_order(
     plan_code: str,
     months: int,
     payment_method: str = 'manual',
+    provider: str | None = None,
+    action: str | None = None,
 ) -> Order:
     opt = get_plan_option(plan_code, months)
     order = Order(
@@ -31,9 +34,12 @@ async def create_subscription_order(
         amount_rub=opt.price_rub,
         currency='RUB',
         payment_method=payment_method,
+        provider=provider or payment_method,
         status='pending',
         created_at=now_utc(),
     )
+    if action:
+        order.meta_json = json.dumps({"action": action}, ensure_ascii=False)
     session.add(order)
     await session.commit()
     await session.refresh(order)

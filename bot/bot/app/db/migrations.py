@@ -46,16 +46,22 @@ async def run_migrations(engine: AsyncEngine) -> None:
         "ALTER TABLE devices ADD COLUMN IF NOT EXISTS profile_code VARCHAR(16) NOT NULL DEFAULT 'smart';",
         "ALTER TABLE devices ADD COLUMN IF NOT EXISTS marzban_username VARCHAR(128) NULL;",
         "ALTER TABLE devices ADD COLUMN IF NOT EXISTS marzban_user_id VARCHAR(64) NULL;",
+        "ALTER TABLE devices ADD COLUMN IF NOT EXISTS happ_install_code VARCHAR(64) NULL;",
 
         # ---- orders ----
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'subscription';",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS plan_code VARCHAR(16) NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS months INTEGER NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount_rub INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount VARCHAR(32) NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS currency VARCHAR(8) NOT NULL DEFAULT 'RUB';",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(16) NOT NULL DEFAULT 'manual';",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider VARCHAR(16) NOT NULL DEFAULT 'manual';",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS provider_payment_id VARCHAR(128) NULL;",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pay_url TEXT NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'pending';",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ NULL;",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS raw_provider_payload TEXT NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS meta_json TEXT NULL;",
         "ALTER TABLE orders ADD COLUMN IF NOT EXISTS referral_bonus_applied_seconds INTEGER NOT NULL DEFAULT 0;",
 

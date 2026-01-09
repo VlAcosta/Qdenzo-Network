@@ -74,6 +74,7 @@ class Device(Base):
 
     marzban_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     marzban_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    happ_install_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -92,12 +93,17 @@ class Order(Base):
     months: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     amount_rub: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    amount: Mapped[str | None] = mapped_column(String(32), nullable=True)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, server_default='RUB')
     payment_method: Mapped[str] = mapped_column(String(16), nullable=False, server_default='manual')
+    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default='manual')
+    provider_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pay_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default='pending')  # pending/paid/canceled/refunded
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    raw_provider_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 

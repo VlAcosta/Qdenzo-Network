@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 import json
+import os
+from decimal import Decimal, ROUND_UP
+from uuid import uuid4
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -17,8 +20,6 @@ from ..services.payments import (
     YooKassaClient,
     is_cryptopay_paid,
     is_yookassa_paid,
-    load_order_meta,
-    update_order_meta,
 )
 
 from ..config import settings
@@ -58,6 +59,9 @@ def _yookassa_enabled() -> bool:
 def _cryptopay_enabled() -> bool:
     return bool(getattr(settings, "cryptopay_token", None))
 
+def _stars_enabled() -> bool:
+    return bool(settings.payment_stars_enabled and settings.tg_stars_enabled)
+
 
 def _traffic_limit_gb(plan_code: str) -> int:
     return {
@@ -67,6 +71,43 @@ def _traffic_limit_gb(plan_code: str) -> int:
         "family": settings.traffic_limit_family_gb,
     }.get(plan_code, 0)
 
+def _stars_price(plan_code: str, months: int, price_rub: int) -> int:
+    key = f"STARS_PRICE_{plan_code.upper()}_{months}"
+    value = os.getenv(key)
+    if value:
+        try:
+            return max(1, int(value))
+        except ValueError:
+            pass
+    return max(1, int(round(price_rub * settings.stars_per_rub)))
+
+
+def _find_rate(rates: list[dict[str, str]], source: str, target: str) -> Decimal | None:
+    for rate in rates:
+        if rate.get("source") == source and rate.get("target") == target:
+            try:
+                return Decimal(str(rate.get("rate")))
+            except Exception:
+                return None
+    return None
+
+
+async def _cryptopay_amount_rub(
+    client: CryptoPayClient, *, amount_rub: int, asset: str
+) -> str:
+    rates = await client.get_exchange_rates()
+    rate = _find_rate(rates, asset, "RUB")
+    if rate is None:
+        rate_usd = _find_rate(rates, asset, "USD")
+        usd_rub = _find_rate(rates, "USD", "RUB")
+        if rate_usd is not None and usd_rub is not None:
+            rate = rate_usd * usd_rub
+    if rate is None or rate <= 0:
+        raise ValueError("crypto_rate_unavailable")
+    amount_asset = (Decimal(amount_rub) / rate).quantize(Decimal("0.000001"), rounding=ROUND_UP)
+    if amount_asset <= 0:
+        raise ValueError("crypto_amount_invalid")
+    return format(amount_asset.normalize(), "f")
 
 
 def _plan_choice_text(code: str, months: int) -> str:
@@ -159,7 +200,12 @@ async def cb_buy_plans(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("plan:"))
 async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
-    _, code, months_s = call.data.split(":", 2)
+    parts = call.data.split(":")
+    action = None
+    if len(parts) == 4:
+        _, action, code, months_s = parts
+    else:
+        _, code, months_s = parts
     months = int(months_s)
 
     async with session_scope() as session:
@@ -187,9 +233,29 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             return
 
         opt = get_plan_option(code, months)
-        order = await create_subscription_order(session, user.id, code, months, payment_method="manual")
+        order = await create_subscription_order(
+            session,
+            user.id,
+            code,
+            months,
+            payment_method="manual",
+            provider="manual",
+            action=action,
+        )
+        sub = await get_or_create_subscription(session, user.id)
 
     text = _plan_choice_text(code, months)
+    if action == "renew":
+        text += (
+            f"\n<b>Продление</b>: текущий тариф — <b>{h(sub.plan_code.upper())}</b>\n"
+            f"Окончание: <b>{fmt_dt(sub.expires_at)}</b>\n"
+        )
+    elif action == "change":
+        text += (
+            f"\n<b>Смена тарифа</b>: сейчас у вас <b>{h(sub.plan_code.upper())}</b>\n"
+            f"Окончание: <b>{fmt_dt(sub.expires_at)}</b>\n"
+            "Новый тариф применится сразу после оплаты.\n"
+        )
     text += "\n<b>Оплата:</b> выберите способ ниже.\n"
     if settings.payment_manual_enabled:
         text += f"{h(settings.manual_payment_text)}\n\n"
@@ -204,7 +270,7 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             yookassa_url=settings.yookassa_pay_url,
             crypto_enabled=_cryptopay_enabled(),
             crypto_url=settings.crypto_pay_url,
-            stars_enabled=settings.payment_stars_enabled,
+            stars_enabled=_stars_enabled(),
             manual_enabled=settings.payment_manual_enabled,
         )
     )
@@ -237,9 +303,8 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
             await call.answer("Заказ уже обработан", show_alert=True)
             return
 
-        meta = load_order_meta(order)
-        if meta.get("provider") == "yookassa" and meta.get("pay_url"):
-            pay_url = meta["pay_url"]
+        if order.provider == "yookassa" and order.pay_url:
+            pay_url = order.pay_url
         else:
             shop_id = getattr(settings, "yookassa_shop_id", None)
             secret_key = getattr(settings, "yookassa_secret_key", None)
@@ -250,7 +315,13 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
                     amount_rub=order.amount_rub,
                     description=f"Заказ #{order.id}",
                     return_url=return_url,
-                    metadata={"order_id": order.id, "tg_id": call.from_user.id},
+                    metadata={
+                        "order_id": order.id,
+                        "tg_id": call.from_user.id,
+                        "plan_code": order.plan_code,
+                        "months": order.months,
+                    },
+                    idempotence_key=f"{order.id}-{uuid4()}",
                 )
             except Exception:
                 logger.exception("Failed to create YooKassa payment for order %s", order.id)
@@ -258,17 +329,12 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
                 return
 
             pay_url = payment.confirmation_url
-            update_order_meta(
-                order,
-                {
-                    "provider": "yookassa",
-                    "provider_payment_id": payment.payment_id,
-                    "pay_url": pay_url,
-                    "amount": order.amount_rub,
-                    "currency": "RUB",
-                    "metadata": {"order_id": order.id, "tg_id": call.from_user.id},
-                },
-            )
+            order.provider = "yookassa"
+            order.provider_payment_id = payment.payment_id
+            order.pay_url = pay_url
+            order.amount = f"{order.amount_rub:.2f}"
+            order.currency = "RUB"
+            order.raw_provider_payload = json.dumps(payment.raw, ensure_ascii=False)
             order.payment_method = "yookassa"
             session.add(order)
             await session.commit()
@@ -280,7 +346,7 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
     await edit_message_text(
         call,
         "💳 Счёт YooKassa создан. Нажмите кнопку ниже для оплаты.",
-        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True),
+        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True, manual_enabled=False),
     )
     await call.answer()
 
@@ -301,20 +367,31 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
             await call.answer("Заказ уже обработан", show_alert=True)
             return
 
-        meta = load_order_meta(order)
-        if meta.get("provider") == "cryptopay" and meta.get("pay_url"):
-            pay_url = meta["pay_url"]
+        if order.provider == "cryptopay" and order.pay_url:
+            pay_url = order.pay_url
         else:
             cryptopay_token = getattr(settings, "cryptopay_token", None)
             client = CryptoPayClient(cryptopay_token)
-            payload = json.dumps({"order_id": order.id, "tg_id": call.from_user.id})
-            amount = str(order.amount_rub)  # TODO: convert RUB to CryptoPay asset amount.
+            payload = json.dumps(
+                {"order_id": order.id, "tg_id": call.from_user.id, "plan_code": order.plan_code, "months": order.months},
+                ensure_ascii=False,
+            )
+            try:
+                amount = await _cryptopay_amount_rub(
+                    client,
+                    amount_rub=order.amount_rub,
+                    asset=getattr(settings, "cryptopay_asset", "USDT"),
+                )
+            except Exception:
+                logger.exception("Failed to resolve CryptoPay rate for order %s", order.id)
+                await call.answer("Не удалось рассчитать сумму. Попробуйте позже.", show_alert=True)
+                return
             try:
                 invoice = await client.create_invoice(
                     amount=amount,
                     asset=getattr(settings, "cryptopay_asset", "USDT"),
                     description=f"Заказ #{order.id}",
-                    payload=payload,
+                    expires_in=settings.cryptopay_invoice_expires_in,
                 )
             except Exception:
                 logger.exception("Failed to create CryptoPay invoice for order %s", order.id)
@@ -322,17 +399,12 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
                 return
 
             pay_url = invoice.pay_url
-            update_order_meta(
-                order,
-                {
-                    "provider": "cryptopay",
-                    "provider_invoice_id": invoice.invoice_id,
-                    "pay_url": pay_url,
-                    "amount": amount,
-                    "currency": settings.cryptopay_asset,
-                    "metadata": {"order_id": order.id, "tg_id": call.from_user.id},
-                },
-            )
+            order.provider = "cryptopay"
+            order.provider_payment_id = str(invoice.invoice_id)
+            order.pay_url = pay_url
+            order.amount = amount
+            order.currency = settings.cryptopay_asset
+            order.raw_provider_payload = json.dumps(invoice.raw, ensure_ascii=False)
             order.payment_method = "cryptopay"
             session.add(order)
             await session.commit()
@@ -344,7 +416,7 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
     await edit_message_text(
         call,
         "🪙 Счёт Crypto Pay создан. Нажмите кнопку ниже для оплаты.",
-        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True),
+        reply_markup=order_payment_kb(order_id, pay_url=pay_url, show_check=True, manual_enabled=False),
     )
     await call.answer()
 
@@ -361,13 +433,12 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             await call.answer("Заказ уже обработан", show_alert=True)
             return
 
-        meta = load_order_meta(order)
-        provider = meta.get("provider")
+        provider = order.provider
         if provider == "cryptopay":
             if not _cryptopay_enabled():
                 await call.answer("Crypto Pay не настроен.", show_alert=True)
                 return
-            invoice_id = meta.get("provider_invoice_id")
+            invoice_id = order.provider_payment_id
             if not invoice_id:
                 await call.answer("Счет не найден.", show_alert=True)
                 return
@@ -377,11 +448,12 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             if not invoice or not is_cryptopay_paid(invoice.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)
                 return
+            order.raw_provider_payload = json.dumps(invoice.raw, ensure_ascii=False)
         elif provider == "yookassa":
             if not _yookassa_enabled():
                 await call.answer("YooKassa не настроена.", show_alert=True)
                 return
-            payment_id = meta.get("provider_payment_id")
+            payment_id = order.provider_payment_id
             if not payment_id:
                 await call.answer("Платеж не найден.", show_alert=True)
                 return
@@ -392,12 +464,16 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             if not is_yookassa_paid(payment.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)
                 return
+            order.raw_provider_payload = json.dumps(payment.raw, ensure_ascii=False)
         else:
             await call.answer("Автоплатеж для заказа не настроен.", show_alert=True)
             return
 
         marz = _marzban_client()
-        new_exp, _ = await mark_order_paid(session=session, marz=marz, order=order)
+        try:
+            new_exp, _ = await mark_order_paid(session=session, marz=marz, order=order)
+        finally:
+            await marz.close()
 
     await edit_message_text(
         call,
@@ -484,6 +560,9 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("stars:"))
 async def cb_stars_pay(call: CallbackQuery, bot: Bot) -> None:
+    if not _stars_enabled():
+        await call.answer("Stars не настроены.", show_alert=True)
+        return
     order_id = int(call.data.split(":")[1])
 
     async with session_scope() as session:
@@ -507,12 +586,12 @@ async def cb_stars_pay(call: CallbackQuery, bot: Bot) -> None:
             return
 
         plan = get_plan_option(order.plan_code, int(order.months))
-        stars_amount = max(1, int(round(plan.price_rub * settings.stars_per_rub)))
+        stars_amount = _stars_price(plan.code, plan.months, plan.price_rub)
 
-        # фиксируем метод и валюту (в твоей модели amount_rub используем как "amount" вообще)
+        order.provider = "stars"
         order.payment_method = "stars"
         order.currency = "XTR"
-        order.amount_rub = stars_amount
+        order.amount = str(stars_amount)
         session.add(order)
         await session.commit()
 
@@ -532,8 +611,25 @@ async def cb_stars_pay(call: CallbackQuery, bot: Bot) -> None:
 
 @router.pre_checkout_query()
 async def stars_pre_checkout(pre: PreCheckoutQuery) -> None:
-    # Подтверждаем платеж перед списанием
-    # Можно тут валидировать payload/заказ
+    payload = pre.invoice_payload or ""
+    try:
+        _, order_id_s, tg_id_s = payload.split(":")
+        order_id = int(order_id_s)
+        tg_id = int(tg_id_s)
+    except Exception:
+        await pre.answer(ok=False, error_message="Некорректный заказ.")
+        return
+
+    if pre.from_user.id != tg_id:
+        await pre.answer(ok=False, error_message="Пользователь не совпадает.")
+        return
+
+    async with session_scope() as session:
+        order = await get_order(session, order_id)
+        if not order or order.status != "pending":
+            await pre.answer(ok=False, error_message="Заказ уже обработан.")
+            return
+
     await pre.answer(ok=True)
 
 @router.message(F.successful_payment)
@@ -577,8 +673,20 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
             await message.answer("Оплата получена, но заказ не ваш. Напишите в поддержку.")
             return
 
-        new_exp, notes = await mark_order_paid(session=session, marz=marz, order=order)
+        order.provider = "stars"
+        order.payment_method = "stars"
+        order.provider_payment_id = sp.telegram_payment_charge_id
+        order.currency = sp.currency or "XTR"
+        order.amount = str(sp.total_amount)
+        order.raw_provider_payload = json.dumps(sp.model_dump(), ensure_ascii=False)
+        session.add(order)
+        await session.commit()
 
+        try:
+            new_exp, notes = await mark_order_paid(session=session, marz=marz, order=order)
+        finally:
+            await marz.close()
+            
     await message.answer(
         f"✅ Оплата Stars прошла успешно!\n"
         f"Подписка активирована до: {new_exp:%Y-%m-%d %H:%M} UTC\n"

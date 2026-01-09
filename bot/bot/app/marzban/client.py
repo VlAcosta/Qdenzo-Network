@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -26,11 +27,15 @@ class MarzbanClient:
         password: str,
         verify_ssl: bool = True,
         timeout: float = 20.0,
+        max_retries: int = 3,
+        backoff_base: float = 0.5,
     ):
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
+        self.max_retries = max_retries
+        self.backoff_base = backoff_base
         self._client = httpx.AsyncClient(base_url=self.base_url, verify=self.verify_ssl, timeout=timeout)
         self._token: Optional[MarzbanAdminToken] = None
 
@@ -71,26 +76,47 @@ class MarzbanClient:
         json: Any | None = None,
         params: Dict[str, Any] | None = None,
     ) -> Any:
-        if self._token is None:
-            await self._login()
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            if self._token is None:
+                await self._login()
 
-        headers = {"Authorization": f"{self._token.token_type.title()} {self._token.access_token}"}
-        r = await self._client.request(method, path, json=json, params=params, headers=headers)
+            headers = {"Authorization": f"{self._token.token_type.title()} {self._token.access_token}"}
+            try:
+                r = await self._client.request(method, path, json=json, params=params, headers=headers)
+            except httpx.RequestError as exc:
+                last_error = exc
+                logger.warning("Marzban request error (attempt %s/%s): %s", attempt, self.max_retries, exc)
+                await asyncio.sleep(self.backoff_base * attempt)
+                continue
 
-        if r.status_code == 401:
-            await self._login()
-            headers["Authorization"] = f"{self._token.token_type.title()} {self._token.access_token}"
-            r = await self._client.request(method, path, json=json, params=params, headers=headers)
+            if r.status_code in {401, 403}:
+                if attempt == self.max_retries:
+                    raise MarzbanError(f"Marzban auth error {r.status_code}: {r.text}")
+                await self._login()
+                await asyncio.sleep(self.backoff_base * attempt)
+                continue
 
-        if r.status_code >= 400:
-            raise MarzbanError(f"Marzban API error {r.status_code}: {r.text}")
+            if r.status_code >= 500:
+                last_error = MarzbanError(f"Marzban API error {r.status_code}: {r.text}")
+                logger.warning("Marzban temporary error (attempt %s/%s): %s", attempt, self.max_retries, last_error)
+                await asyncio.sleep(self.backoff_base * attempt)
+                continue
 
-        if not r.text:
-            return None
-        try:
-            return r.json()
-        except Exception:
-            return r.text
+            if r.status_code >= 400:
+                raise MarzbanError(f"Marzban API error {r.status_code}: {r.text}")
+
+            if not r.text:
+                return None
+            try:
+                return r.json()
+            except Exception:
+                return r.text
+
+        if last_error:
+            raise MarzbanError(f"Marzban request failed after retries: {last_error}")
+        raise MarzbanError("Marzban request failed after retries")
+
 
     async def get_user(self, username: str) -> Optional[Dict[str, Any]]:
         try:
@@ -131,6 +157,10 @@ class MarzbanClient:
 
     async def modify_user(self, username: str, **fields: Any) -> Dict[str, Any]:
         return await self._request("PUT", f"{self.api_prefix}/user/{username}", json=fields)
+    
+    async def update_user(self, username: str, **fields: Any) -> Dict[str, Any]:
+        return await self.modify_user(username, **fields)
+
 
     async def remove_user(self, username: str) -> Any:
         return await self._request("DELETE", f"{self.api_prefix}/user/{username}")

@@ -63,12 +63,40 @@ class Settings(BaseSettings):
         alias='MANUAL_PAYMENT_TEXT'
     )
 
+    public_base_url: str | None = Field(None, alias='PUBLIC_BASE_URL')
+
     webhook_host: str = Field('0.0.0.0', alias='WEBHOOK_HOST')
     webhook_port: int = Field(8080, alias='WEBHOOK_PORT')
 
     # External payment links (optional)
     yookassa_pay_url: str | None = Field(None, alias='YOOKASSA_PAY_URL')
     crypto_pay_url: str | None = Field(None, alias='CRYPTO_PAY_URL')
+
+    # YooKassa
+    yookassa_shop_id: str | None = Field(None, alias='YOOKASSA_SHOP_ID')
+    yookassa_secret_key: str | None = Field(None, alias='YOOKASSA_SECRET_KEY')
+    yookassa_return_url: str | None = Field(None, alias='YOOKASSA_RETURN_URL')
+    yookassa_webhook_path_secret: str | None = Field(None, alias='YOOKASSA_WEBHOOK_PATH_SECRET')
+
+    # CryptoPay
+    cryptopay_token: str | None = Field(None, alias='CRYPTOPAY_TOKEN')
+    cryptopay_asset: str = Field('USDT', alias='CRYPTOPAY_ASSET')
+    cryptopay_webhook_path_secret: str | None = Field(None, alias='CRYPTOPAY_WEBHOOK_PATH_SECRET')
+    cryptopay_webhook_secret: str | None = Field(None, alias='CRYPTOPAY_WEBHOOK_SECRET')
+    cryptopay_invoice_expires_in: int | None = Field(None, alias='CRYPTOPAY_INVOICE_EXPIRES_IN')
+
+    # YooKassa API (optional)
+    yookassa_shop_id: str | None = Field(None, alias='YOOKASSA_SHOP_ID')
+    yookassa_secret_key: str | None = Field(None, alias='YOOKASSA_SECRET_KEY')
+    yookassa_return_url: str | None = Field(None, alias='YOOKASSA_RETURN_URL')
+    yookassa_webhook_path_secret: str | None = Field(None, alias='YOOKASSA_WEBHOOK_PATH_SECRET')
+
+    # Crypto Pay (CryptoBot) API (optional)
+    cryptopay_token: str | None = Field(None, alias='CRYPTOPAY_TOKEN')
+    cryptopay_webhook_secret: str | None = Field(None, alias='CRYPTOPAY_WEBHOOK_SECRET')
+    cryptopay_webhook_path_secret: str | None = Field(None, alias='CRYPTOPAY_WEBHOOK_PATH_SECRET')
+    cryptopay_asset: str = Field('USDT', alias='CRYPTOPAY_ASSET')
+
 
     # Telegram payments (provider token) - optional
     tg_provider_token: str | None = Field(None, alias='TG_PROVIDER_TOKEN')
@@ -110,6 +138,12 @@ class Settings(BaseSettings):
     
     payment_stars_enabled: bool = Field(True, alias="PAYMENT_STARS_ENABLED")
     stars_per_rub: float = Field(1.0, alias="STARS_PER_RUB")
+
+    # Happ / Happ-Proxy
+    happ_url: str | None = Field(None, alias="HAPP_URL")
+    happ_proxy_api_base: str | None = Field(None, alias="HAPP_PROXY_API_BASE")
+    happ_proxy_provider_code: str | None = Field(None, alias="HAPP_PROXY_PROVIDER_CODE")
+    happ_proxy_auth_key: str | None = Field(None, alias="HAPP_PROXY_AUTH_KEY")
 
 
 @lru_cache(maxsize=1)

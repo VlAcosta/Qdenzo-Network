@@ -8,10 +8,13 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from sqlalchemy import desc, select
+
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
 from ..keyboards.plans import plan_options_kb
 from ..keyboards.subscription import subscription_kb
+from ..models import Order
 from ..services import get_or_create_subscription
 from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
 from ..services.devices import count_active_devices
@@ -118,7 +121,16 @@ async def cb_sub_renew(call: CallbackQuery) -> None:
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
         "Продлить на:"
     )
-    await edit_message_text(call, text, reply_markup=plan_options_kb(options, back_cb="sub"))
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:renew"),
+    )
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:renew"),
+    )
     await call.answer()
 
 
@@ -140,14 +152,47 @@ async def cb_sub_change(call: CallbackQuery) -> None:
         f"🛠 <b>Сменить тариф</b>\n\n"
         f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
+        "Новый тариф применится сразу после оплаты.\n\n"
         "Сменить тариф: выберите новый 👇"
     )
-    await edit_message_text(call, text, reply_markup=plan_options_kb(options, back_cb="sub"))
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:change"),
+    )
     await call.answer()
 
 @router.callback_query(F.data == 'sub:history')
 async def cb_sub_history(call: CallbackQuery) -> None:
-    await edit_message_text(call, "История оплат появится здесь позже.", reply_markup=nav_kb(back_cb='sub', home_cb='back'))
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        q = await session.execute(
+            select(Order).where(Order.user_id == user.id).order_by(desc(Order.created_at)).limit(10)
+        )
+        orders = list(q.scalars().all())
+
+    if not orders:
+        text = "История оплат пока пуста."
+    else:
+        lines = ["🧾 <b>История оплат</b>\n"]
+        for order in orders:
+            plan = plan_title(order.plan_code or "—")
+            amount = order.amount or str(order.amount_rub)
+            currency = order.currency or "RUB"
+            lines.append(
+                f"• {fmt_dt(order.created_at)} — #{order.id} — {h(plan)} — {amount} {h(currency)} — "
+                f"{h(order.provider)} — {h(order.status)}"
+            )
+        text = "\n".join(lines)
+
+    await edit_message_text(call, text, reply_markup=nav_kb(back_cb='sub', home_cb='back'))
     await call.answer()
 
 

@@ -53,6 +53,58 @@ docker compose up -d --build
 docker compose logs -f bot
 ```
 
+## Запуск в проде
+
+1) Убедитесь, что бот доступен по HTTPS домену и укажите его в `.env`:
+
+```
+PUBLIC_BASE_URL=https://your-domain.com
+```
+
+2) Поднимите reverse proxy (nginx/caddy) и прокиньте HTTPS на порт `8080` контейнера.
+
+3) Проверьте, что вебхуки доступны:
+
+```
+https://your-domain.com/webhook/yookassa/<YOOKASSA_WEBHOOK_PATH_SECRET>
+https://your-domain.com/webhook/cryptopay/<CRYPTOPAY_WEBHOOK_PATH_SECRET>
+```
+
+## Настройка Webhooks
+
+### YooKassa (СБП/карта)
+
+1) Создайте API-ключ и укажите:
+   - `YOOKASSA_SHOP_ID`
+   - `YOOKASSA_SECRET_KEY`
+   - `YOOKASSA_RETURN_URL`
+   - `YOOKASSA_WEBHOOK_PATH_SECRET`
+2) В личном кабинете YooKassa добавьте webhook `payment.succeeded` на:
+   ```
+   https://<domain>/webhook/yookassa/<YOOKASSA_WEBHOOK_PATH_SECRET>
+   ```
+
+### Crypto Pay (@CryptoBot)
+
+1) Создайте токен и укажите:
+   - `CRYPTOPAY_TOKEN`
+   - `CRYPTOPAY_ASSET`
+   - `CRYPTOPAY_WEBHOOK_PATH_SECRET`
+   - `CRYPTOPAY_WEBHOOK_SECRET`
+2) В кабинете CryptoBot укажите webhook:
+   ```
+   https://<domain>/webhook/cryptopay/<CRYPTOPAY_WEBHOOK_PATH_SECRET>
+   ```
+
+### Telegram Stars
+
+1) Включите `TG_STARS_ENABLED=true`.
+2) Задайте цены Stars в `.env` (например `STARS_PRICE_START_1=...`).
+
+### Проверка оплаты
+
+На экране оплаты есть кнопка «🔄 Проверить оплату». Она обращается к YooKassa/CryptoPay напрямую и активирует подписку при подтверждении.
+
 ## Как зайти в Postgres
 
 ```bash

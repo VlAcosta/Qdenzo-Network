@@ -68,6 +68,7 @@ def device_happ_kb(*, happ_url: str, continue_cb: str, back_cb: str) -> InlineKe
 
 def device_menu_kb(device_id: int, *, is_active: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="🚀 Подключить в Happ", callback_data=f"dev:connect:{device_id}")],
         [InlineKeyboardButton(text="🔗 Конфиг / Импорт", callback_data=f"dev:cfg:{device_id}")],
         [InlineKeyboardButton(text="🧪 Проверить доступ", callback_data=f"dev:check:{device_id}")],
         [InlineKeyboardButton(text="♻️ Перевыпустить конфиг", callback_data=f"dev:reissue:{device_id}")],

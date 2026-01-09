@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,7 +15,6 @@ from ..config import settings
 from ..db import session_scope
 from ..keyboards.devices import (
     device_delete_confirm_kb,
-    device_happ_kb,
     device_menu_kb,
     device_type_kb,
     devices_list_kb,
@@ -32,22 +31,156 @@ from ..services.devices import (
     rename_device,
 )
 from ..services.subscriptions import get_or_create_subscription, is_active
-from ..services.users import get_or_create_user, get_user_by_tg_id
-from ..services.happ_proxy import HappProxyConfig, add_install_code
+from ..services.users import get_or_create_user
+from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
 from ..services.happ_crypto import encrypt_subscription_url
 from ..utils.text import h
 from ..utils.telegram import edit_message_text
 
 router = Router()
 
-HAPP_URL_DEFAULT = "https://example.com/happ"
+HAPP_URL_DEFAULT = "https://www.happ.su/"
 
 
 class DeviceStates(StatesGroup):
-    waiting_happ_confirm = State()
     choosing_new_device_name = State()
     renaming_device = State()
 
+def _connect_instruction_text() -> str:
+    return (
+        "📄 <b>Инструкция по подключению</b>\n\n"
+        "1) Установите приложение Happ.\n"
+        "2) Нажмите «Импорт в Happ» (шифрованный импорт) или «Показать обычную ссылку».\n"
+        "3) Подтвердите импорт и дождитесь активации.\n\n"
+        "Если импорт не сработал — используйте обычную ссылку и выберите профиль вручную."
+    )
+
+
+def _happ_proxy_cfg() -> HappProxyConfig | None:
+    if not (settings.happ_proxy_api_base and settings.happ_proxy_provider_code and settings.happ_proxy_auth_key):
+        return None
+    return HappProxyConfig(
+        api_base=settings.happ_proxy_api_base,
+        provider_code=settings.happ_proxy_provider_code,
+        auth_key=settings.happ_proxy_auth_key,
+    )
+
+
+async def _resolve_device_urls(device) -> tuple[str | None, str | None]:
+    if not device.marzban_username:
+        return None, None
+    marz = MarzbanClient(
+        base_url=str(settings.marzban_base_url),
+        username=settings.marzban_username,
+        password=settings.marzban_password,
+        verify_ssl=settings.marzban_verify_ssl,
+    )
+    try:
+        link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
+    finally:
+        await marz.close()
+    return link, subscription_url
+
+
+def _pick_connection_url(link: str | None, subscription_url: str | None) -> str | None:
+    if settings.marzban_link_mode == "link":
+        return link
+    if settings.marzban_link_mode == "subscription":
+        return subscription_url
+    return subscription_url or link
+
+
+async def _ensure_install_code(session, device, *, install_limit: int) -> str | None:
+    cfg = _happ_proxy_cfg()
+    if not cfg:
+        return None
+    if device.happ_install_code:
+        return device.happ_install_code
+    install_code = await add_install_code(
+        cfg,
+        install_limit=install_limit,
+        note=f"user={device.user_id} dev={device.id}",
+    )
+    device.happ_install_code = install_code
+    session.add(device)
+    await session.commit()
+    return install_code
+
+
+async def _build_connect_links(session, device, *, install_limit: int) -> tuple[str | None, str | None]:
+    link, subscription_url = await _resolve_device_urls(device)
+    base_url = _pick_connection_url(link, subscription_url)
+    if not base_url:
+        return None, None
+    try:
+        install_code = await _ensure_install_code(session, device, install_limit=install_limit)
+    except Exception:
+        install_code = None
+    limited_url = _with_install_id(base_url, install_code) if install_code else base_url
+    try:
+        crypt_url = await encrypt_subscription_url(limited_url)
+    except Exception:
+        crypt_url = None
+    return limited_url, crypt_url
+
+
+def _connect_kb(*, device_id: int, crypt_url: str | None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    rows.append([InlineKeyboardButton(text="⬇️ Установить Happ", url=settings.happ_url or HAPP_URL_DEFAULT)])
+    if crypt_url:
+        rows.append([InlineKeyboardButton(text="🚀 Импорт в Happ (шифр.)", url=crypt_url)])
+    rows.append([InlineKeyboardButton(text="🔗 Показать обычную ссылку", callback_data=f"dev:show_link:{device_id}")])
+    rows.append([InlineKeyboardButton(text="📄 Инструкция", callback_data=f"dev:instruction:{device_id}")])
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
+    async with session_scope() as session:
+        device = await get_device(session, device_id)
+        if not device:
+            if isinstance(call_or_message, CallbackQuery):
+                await call_or_message.answer("Устройство не найдено", show_alert=True)
+            else:
+                await call_or_message.answer("Устройство не найдено")
+            return
+        if hasattr(call_or_message, "from_user") and device.user.tg_id != call_or_message.from_user.id:
+            if isinstance(call_or_message, CallbackQuery):
+                await call_or_message.answer("Устройство не найдено", show_alert=True)
+            else:
+                await call_or_message.answer("Устройство не найдено")
+            return
+        sub = await get_or_create_subscription(session, device.user_id)
+        limited_url, crypt_url = await _build_connect_links(session, device, install_limit=sub.devices_limit)
+
+    if not limited_url:
+        text = "Ссылка для подключения пока недоступна. Попробуйте позже или обратитесь в поддержку."
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+        ]])
+        if isinstance(call_or_message, CallbackQuery):
+            await edit_message_text(call_or_message, text, reply_markup=kb)
+            await call_or_message.answer()
+        else:
+            await call_or_message.answer(text, reply_markup=kb)
+        return
+
+    text = (
+        "🚀 <b>Подключить устройство</b>\n\n"
+        "Выберите способ подключения 👇"
+    )
+    if crypt_url is None:
+        text += "\n\n⚠️ Шифрованный импорт временно недоступен — используйте обычную ссылку."
+    kb = _connect_kb(device_id=device_id, crypt_url=crypt_url)
+    if isinstance(call_or_message, CallbackQuery):
+        await edit_message_text(call_or_message, text, reply_markup=kb)
+        await call_or_message.answer()
+    else:
+        await call_or_message.answer(text, reply_markup=kb)
 
 def _type_title(device_type: str) -> str:
     return DEVICE_TYPES.get(device_type, device_type)
@@ -151,27 +284,7 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
         await cb_devices(call)
         return
 
-    await state.clear()
-    await state.set_state(DeviceStates.waiting_happ_confirm)
 
-    happ_url = getattr(settings, "happ_url", None) or HAPP_URL_DEFAULT
-
-    await edit_message_text(
-        call,
-        "🚀 <b>Подключение устройства</b>\n\n"
-        "Сначала откройте приложение/скрипт (Happ).\n"
-        "Затем нажмите <b>«Я открыл приложение»</b>.",
-        reply_markup=device_happ_kb(
-            happ_url=happ_url,
-            continue_cb="dev:happ_ok",
-            back_cb="devices",
-        ),
-    )
-    await call.answer()
-
-
-@router.callback_query(F.data == "dev:happ_ok")
-async def cb_happ_ok(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await edit_message_text(
         call,
@@ -201,7 +314,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(DeviceStates.choosing_new_device_name)
-async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> None:
+async def msg_new_device_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     device_type = data.get("device_type")
     label = (message.text or "").strip()
@@ -229,58 +342,33 @@ async def msg_new_device_name(message: Message, state: FSMContext, bot: Bot) -> 
             await state.clear()
             return
 
-        marz = MarzbanClient(
-            base_url=str(settings.marzban_base_url),
-            username=settings.marzban_username,
-            password=settings.marzban_password,
-            verify_ssl=settings.marzban_verify_ssl,
+    marz = MarzbanClient(
+        base_url=str(settings.marzban_base_url),
+        username=settings.marzban_username,
+        password=settings.marzban_password,
+        verify_ssl=settings.marzban_verify_ssl,
+    )
+    try:
+        device = await create_device(
+            session=session,
+            marz=marz,
+            user=user,
+            sub=sub,
+            device_type=device_type,
+            label=label,
         )
-        try:
-            device = await create_device(
-                session=session,
-                marz=marz,
-                user=user,
-                sub=sub,
-                device_type=device_type,
-                label=label,
-            )
-        finally:
-            await marz.close()
+    finally:
+        await marz.close()
 
     await state.clear()
 
-    # финальный экран
-    cfg = HappProxyConfig(
-        api_base=settings.happ_proxy_api_base,
-        provider_code=settings.happ_proxy_provider_code,
-        auth_key=settings.happ_proxy_auth_key,
-    )
 
-    # лимит по тарифу (можно сделать 1 на устройство или общий лимит)
-    install_code = await add_install_code(
-        cfg,
-        install_limit=sub.devices_limit,
-        note=f"user={device.user_id} dev={device.id}",
-    )
-
-    limited_url = _with_install_id(device.subscription_url, install_code)
-    crypt_url = await encrypt_subscription_url(limited_url)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Импорт в Happ", url=crypt_url)],
-        [InlineKeyboardButton(text="📲 Открыть Happ", url=str(settings.happ_url))],
-        [InlineKeyboardButton(text="🔗 Показать ссылку", callback_data=f"dev:show_link:{device.id}")],
-        [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device.id}"),
-            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
-        ],
-    ])
 
     await message.answer(
         f"✅ Устройство <b>{h(device.label)}</b> добавлено!\n\n"
-        "Теперь получите конфиг и подключитесь 👇",
-        reply_markup=kb,
+        "Теперь подключите его 👇",
     )
+    await _show_connect_screen(message, device_id=device.id)
 
 
 @router.callback_query(F.data.startswith("dev:rename:"))
@@ -364,4 +452,50 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         f"<pre><code>{h(shown)}</code></pre>"
     )
     await edit_message_text(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dev:connect:"))
+async def cb_device_connect(call: CallbackQuery) -> None:
+    device_id = int(call.data.split(":")[-1])
+    await _show_connect_screen(call, device_id=device_id)
+
+
+@router.callback_query(F.data.startswith("dev:show_link:"))
+async def cb_device_show_link(call: CallbackQuery) -> None:
+    device_id = int(call.data.split(":")[-1])
+    async with session_scope() as session:
+        device = await get_device(session, device_id)
+        if not device or device.user.tg_id != call.from_user.id:
+            await call.answer("Устройство не найдено", show_alert=True)
+            return
+        sub = await get_or_create_subscription(session, device.user_id)
+        limited_url, _ = await _build_connect_links(session, device, install_limit=sub.devices_limit)
+
+    if not limited_url:
+        await call.answer("Ссылка пока недоступна", show_alert=True)
+        return
+
+    text = (
+        "🔗 <b>Обычная ссылка</b>\n\n"
+        "Скопируйте и импортируйте в клиент вручную:\n\n"
+        f"<pre><code>{h(limited_url)}</code></pre>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ]])
+    await edit_message_text(call, text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dev:instruction:"))
+async def cb_device_instruction(call: CallbackQuery) -> None:
+    device_id = int(call.data.split(":")[-1])
+    text = _connect_instruction_text()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ]])
+    await edit_message_text(call, text, reply_markup=kb)
     await call.answer()

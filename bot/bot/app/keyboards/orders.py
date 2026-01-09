@@ -38,10 +38,10 @@ def order_payment_kb(
     if show_check:
         rows.append([InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check:{order_id}")])
 
-    if manual_enabled:
+    if manual_enabled and not pay_url:
         rows.append([InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"paid:{order_id}")])
 
     rows.append([InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_order:{order_id}")])
-    
+
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

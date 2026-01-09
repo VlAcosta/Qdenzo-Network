@@ -49,15 +49,19 @@ class CryptoPayClient:
         asset: str,
         description: str,
         payload: str,
+        expires_in: int | None = None,
     ) -> CryptoPayInvoice:
+        req: dict[str, Any] = {
+            "amount": amount,
+            "asset": asset,
+            "description": description,
+            "payload": payload,
+        }
+        if expires_in:
+            req["expires_in"] = int(expires_in)
         result = await self._request(
             "createInvoice",
-            {
-                "amount": amount,
-                "asset": asset,
-                "description": description,
-                "payload": payload,
-            },
+            req,
         )
         return CryptoPayInvoice(
             invoice_id=int(result["invoice_id"]),
@@ -79,6 +83,10 @@ class CryptoPayClient:
             raw=invoice,
         )
 
+    async def get_exchange_rates(self) -> list[dict[str, Any]]:
+        result = await self._request("getExchangeRates", {})
+        return list(result or [])
+
 
 def verify_webhook_signature(*, token: str, body: bytes, signature: str | None) -> bool:
     """Verify Crypto Pay webhook signature (HMAC SHA-256)."""
@@ -89,4 +97,4 @@ def verify_webhook_signature(*, token: str, body: bytes, signature: str | None) 
 
 
 def is_paid_status(status: str) -> bool:
-    return status in {"paid", "confirmed"}
+    return status in {"paid", "confirmed", "paid_confirmed"}

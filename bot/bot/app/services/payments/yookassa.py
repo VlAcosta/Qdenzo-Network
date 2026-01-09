@@ -30,9 +30,18 @@ class YooKassaClient:
         self._api_base = api_base
         self._timeout = timeout
 
-    async def _request(self, method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        idempotence_key: str | None = None,
+    ) -> dict[str, Any]:
         auth = (self._shop_id, self._secret_key)
-        headers = {"Idempotence-Key": str(uuid4())}
+        headers = {}
+        if idempotence_key:
+            headers["Idempotence-Key"] = idempotence_key
         async with httpx.AsyncClient(base_url=self._api_base, timeout=self._timeout, auth=auth) as client:
             response = await client.request(method, url, json=payload, headers=headers)
         response.raise_for_status()
@@ -45,6 +54,7 @@ class YooKassaClient:
         description: str,
         return_url: str,
         metadata: dict[str, Any],
+        idempotence_key: str | None = None,
     ) -> YooKassaPayment:
         payload = {
             "amount": {"value": f"{amount_rub:.2f}", "currency": "RUB"},
@@ -53,7 +63,7 @@ class YooKassaClient:
             "description": description,
             "metadata": metadata,
         }
-        result = await self._request("POST", "/payments", payload)
+        result = await self._request("POST", "/payments", payload, idempotence_key=idempotence_key or str(uuid4()))
         confirmation_url = result.get("confirmation", {}).get("confirmation_url")
         return YooKassaPayment(
             payment_id=str(result["id"]),

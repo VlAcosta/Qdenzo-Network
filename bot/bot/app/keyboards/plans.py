@@ -20,13 +20,18 @@ def plans_kb(*, include_trial: bool = True) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='back')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def plan_options_kb(options: list[PlanOption], *, back_cb: str) -> InlineKeyboardMarkup:
+def plan_options_kb(
+    options: list[PlanOption],
+    *,
+    back_cb: str,
+    callback_prefix: str = "plan",
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for opt in options:
         if opt.code == 'trial':
             title = f"🎁 Trial — {TRIAL_HOURS}ч — бесплатно"
         else:
             title = f"{opt.name} — {opt.months} мес — {opt.price_rub}₽"
-        rows.append([InlineKeyboardButton(text=title, callback_data=f"plan:{opt.code}:{opt.months}")])
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"{callback_prefix}:{opt.code}:{opt.months}")])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
