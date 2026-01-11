@@ -12,7 +12,7 @@ from sqlalchemy import desc, select
 
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
-from ..keyboards.plans import plan_options_kb
+from ..keyboards.plans import plan_groups_kb, plan_options_kb
 from ..keyboards.subscription import subscription_kb
 from ..models import Order
 from ..services import get_or_create_subscription
@@ -147,7 +147,6 @@ async def cb_sub_change(call: CallbackQuery) -> None:
         )
         sub = await get_or_create_subscription(session, user.id)
 
-    options = [opt for opt in plan_options(include_trial=False) if opt.code != sub.plan_code]
     text = (
         f"🛠 <b>Сменить тариф</b>\n\n"
         f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
@@ -158,7 +157,52 @@ async def cb_sub_change(call: CallbackQuery) -> None:
     await edit_message_text(
         call,
         text,
-        reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:change"),
+        reply_markup=plan_groups_kb(
+            include_trial=False,
+            back_cb="sub",
+            callback_prefix="plan_group:change",
+            exclude_codes={sub.plan_code},
+        ),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("plan_group:change:"))
+async def cb_sub_change_group(call: CallbackQuery) -> None:
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        return
+    _, _, code = parts
+    async with session_scope() as session:
+        user = await get_or_create_user(
+            session=session,
+            tg_id=call.from_user.id,
+            username=call.from_user.username,
+            first_name=call.from_user.first_name,
+            ref_code=None,
+            locale=call.from_user.language_code,
+        )
+        sub = await get_or_create_subscription(session, user.id)
+
+    if code == sub.plan_code:
+        await call.answer("Этот тариф уже активен", show_alert=True)
+        return
+
+    options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
+    if not options:
+        await call.answer("Тариф не найден", show_alert=True)
+        return
+
+    text = (
+        f"🛠 <b>Сменить тариф</b>\n\n"
+        f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
+        f"Новый тариф: <b>{h(plan_title(code))}</b>\n\n"
+        "Выберите период подписки:"
+    )
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=plan_options_kb(options, back_cb="sub:change", callback_prefix="plan:change"),
     )
     await call.answer()
 

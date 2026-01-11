@@ -36,7 +36,12 @@ class MarzbanClient:
         self.verify_ssl = verify_ssl
         self.max_retries = max_retries
         self.backoff_base = backoff_base
-        self._client = httpx.AsyncClient(base_url=self.base_url, verify=self.verify_ssl, timeout=timeout)
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            verify=self.verify_ssl,
+            timeout=timeout,
+            follow_redirects=True,
+        )
         self._token: Optional[MarzbanAdminToken] = None
 
         # если base_url уже заканчивается на /api, не добавляем /api второй раз

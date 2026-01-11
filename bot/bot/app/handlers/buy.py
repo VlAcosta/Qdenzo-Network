@@ -14,7 +14,7 @@ from loguru import logger
 from ..marzban.client import MarzbanClient
 from ..models import Order
 from ..services.orders import mark_order_paid
-from ..services.catalog import get_plan_option
+from ..services.catalog import get_plan_option, plan_options, plan_title
 from ..services.payments import (
     CryptoPayClient,
     YooKassaClient,
@@ -25,8 +25,8 @@ from ..services.payments import (
 from ..config import settings
 from ..db import session_scope
 from ..keyboards.buy import buy_manage_kb, trial_activated_kb
-from ..keyboards.orders import order_payment_kb
-from ..keyboards.plans import plans_kb
+from ..keyboards.orders import order_canceled_kb, order_payment_kb
+from ..keyboards.plans import plan_options_kb, plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
 from ..services.devices import count_active_devices
 from ..services.subscriptions import activate_trial, is_active
@@ -195,6 +195,25 @@ async def cb_buy(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "buy:plans")
 async def cb_buy_plans(call: CallbackQuery) -> None:
     await edit_message_text(call, "💳 Выберите тариф:", reply_markup=plans_kb(include_trial=True))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("plan_group:"))
+async def cb_plan_group(call: CallbackQuery) -> None:
+    parts = call.data.split(":")
+    if len(parts) != 2:
+        return
+    _, code = parts
+    options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
+    if not options:
+        await call.answer("Тариф не найден", show_alert=True)
+        return
+    text = f"💳 <b>{h(plan_title(code))}</b>\nВыберите период подписки:"
+    await edit_message_text(
+        call,
+        text,
+        reply_markup=plan_options_kb(options, back_cb="buy:plans"),
+    )
     await call.answer()
 
 
@@ -553,8 +572,7 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
         order.status = "canceled"
         session.add(order)
         await session.commit()
-
-    await edit_message_text(call, f"❌ Заказ #{order_id} отменён.")
+    await edit_message_text(call, f"❌ Заказ #{order_id} отменён.", reply_markup=order_canceled_kb())
     await call.answer()
 
 

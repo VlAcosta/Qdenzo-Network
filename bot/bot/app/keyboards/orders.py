@@ -45,3 +45,9 @@ def order_payment_kb(
 
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def order_canceled_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Выбрать тариф", callback_data="buy:plans")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back")],
+    ])

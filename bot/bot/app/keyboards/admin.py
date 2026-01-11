@@ -21,14 +21,17 @@ def admin_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def admin_order_actions_kb(order: Order) -> InlineKeyboardMarkup:
+def admin_order_action_kb(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text='✅ Подтвердить', callback_data=f'admin:approve:{order.id}'),
-            InlineKeyboardButton(text='❌ Отклонить', callback_data=f'admin:cancel:{order.id}'),
+            InlineKeyboardButton(text='✅ Подтвердить', callback_data=f'admin:approve:{order_id}'),
+            InlineKeyboardButton(text='❌ Отклонить', callback_data=f'admin:cancel:{order_id}'),
         ],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin:pending')],
     ])
+
+def admin_order_actions_kb(order: Order) -> InlineKeyboardMarkup:
+    return admin_order_action_kb(order.id)
 
 
 def admin_orders_kb(orders: list[Order]) -> InlineKeyboardMarkup:
