@@ -77,3 +77,19 @@ async def get_or_create_user(
     await session.commit()
     await session.refresh(user)
     return user
+
+async def ensure_user(
+    *,
+    session: AsyncSession,
+    tg_user,
+    ref_code: str | None = None,
+) -> User:
+    """Wrapper to ensure required fields are always provided."""
+    return await get_or_create_user(
+        session=session,
+        tg_id=tg_user.id,
+        username=getattr(tg_user, "username", None),
+        first_name=getattr(tg_user, "first_name", None) or "",
+        ref_code=ref_code,
+        locale=getattr(tg_user, "language_code", None) or "ru",
+    )

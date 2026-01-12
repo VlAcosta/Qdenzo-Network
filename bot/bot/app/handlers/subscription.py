@@ -18,7 +18,7 @@ from ..models import Order
 from ..services import get_or_create_subscription
 from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
 from ..services.devices import count_active_devices
-from ..services.users import get_or_create_user
+from ..services.users import ensure_user
 from ..utils.telegram import edit_message_text
 from ..utils.text import fmt_dt, h
 
@@ -43,14 +43,7 @@ def _remaining(expires_at: datetime | None) -> str:
 @router.message(Command('sub'))
 async def cmd_sub(message: Message) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            ref_code=None,
-            locale=message.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
         used = await count_active_devices(session, user.id)
 
@@ -73,14 +66,7 @@ async def cmd_sub(message: Message) -> None:
 @router.callback_query(F.data == 'sub')
 async def cb_sub(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
         used = await count_active_devices(session, user.id)
 
@@ -104,14 +90,7 @@ async def cb_sub(call: CallbackQuery) -> None:
 @router.callback_query(F.data == 'sub:renew')
 async def cb_sub_renew(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
     options = [opt for opt in list_plan_options_by_code(sub.plan_code) if opt.months > 0]
@@ -132,14 +111,7 @@ async def cb_sub_renew(call: CallbackQuery) -> None:
 @router.callback_query(F.data == 'sub:change')
 async def cb_sub_change(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
     text = (
@@ -169,14 +141,7 @@ async def cb_sub_change_group(call: CallbackQuery) -> None:
         return
     _, _, code = parts
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
     if code == sub.plan_code:
@@ -204,14 +169,7 @@ async def cb_sub_change_group(call: CallbackQuery) -> None:
 @router.callback_query(F.data == 'sub:history')
 async def cb_sub_history(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         q = await session.execute(
             select(Order).where(Order.user_id == user.id).order_by(desc(Order.created_at)).limit(10)
         )

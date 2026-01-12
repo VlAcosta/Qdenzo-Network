@@ -31,7 +31,7 @@ from ..keyboards.plans import plan_options_kb, plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
 from ..services.devices import count_active_devices
 from ..services.subscriptions import activate_trial, is_active
-from ..services.users import get_or_create_user
+from ..services.users import ensure_user
 from ..utils.text import fmt_dt, h
 from ..utils.telegram import edit_message_text
 
@@ -139,14 +139,7 @@ async def _get_order_for_user(session, order_id: int, user: User) -> Order | Non
     order = await get_order(session, order_id)
     if not order:
         return None
-    db_user = await get_or_create_user(
-        session=session,
-        tg_id=user.id,
-        username=user.username,
-        first_name=user.first_name,
-        ref_code=None,
-        locale=getattr(user, "language_code", None),
-    )
+    db_user = await ensure_user(session=session, tg_user=user)
     if order.user_id != db_user.id:
         return None
     return order
@@ -165,14 +158,7 @@ async def cb_buy(call: CallbackQuery) -> None:
     Если не активна -> показываем тарифы.
     """
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
         devices_active = await count_active_devices(session, user.id)
 
@@ -230,14 +216,7 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
     months = int(months_s)
 
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         if user.is_banned:
             await call.answer("Доступ ограничен", show_alert=True)
             return
@@ -539,14 +518,7 @@ async def cb_paid(call: CallbackQuery, bot: Bot) -> None:
             await call.answer("Заказ не найден", show_alert=True)
             return
         if order.user_id != (
-            await get_or_create_user(
-                session=session,
-                tg_id=call.from_user.id,
-                username=call.from_user.username,
-                first_name=call.from_user.first_name,
-                ref_code=None,
-                locale=call.from_user.language_code,
-            )
+            await ensure_user(session=session, tg_user=call.from_user)
         ).id:
             await call.answer("Это не ваш заказ", show_alert=True)
             return
@@ -584,14 +556,7 @@ async def cb_cancel_order(call: CallbackQuery) -> None:
             await call.answer("Не найдено", show_alert=True)
             return
         if order.user_id != (
-            await get_or_create_user(
-                session=session,
-                tg_id=call.from_user.id,
-                username=call.from_user.username,
-                first_name=call.from_user.first_name,
-                ref_code=None,
-                locale=call.from_user.language_code,
-            )
+            await ensure_user(session=session, tg_user=call.from_user)
         ).id:
             await call.answer("Это не ваш заказ", show_alert=True)
             return
@@ -619,11 +584,7 @@ async def cb_stars_pay(call: CallbackQuery, bot: Bot) -> None:
             return
 
         # защита: заказ должен принадлежать пользователю
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         if order.user_id != user.id:
             await call.answer("Это не ваш заказ", show_alert=True)
             return
@@ -712,11 +673,7 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
             return
 
         # еще раз защита по владельцу
-        user = await get_or_create_user(
-            session=session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-        )
+        user = await ensure_user(session=session, tg_user=message.from_user)
         if order.user_id != user.id:
             await message.answer("Оплата получена, но заказ не ваш. Напишите в поддержку.")
             return

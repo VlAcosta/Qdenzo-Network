@@ -9,7 +9,7 @@ from ..db import session_scope
 from ..keyboards.main import main_menu
 from ..services.subscriptions import is_active
 from ..services import get_or_create_subscription
-from ..services.users import get_or_create_user
+from ..services.users import ensure_user
 from ..utils.text import h
 
 router = Router()
@@ -31,14 +31,7 @@ async def cmd_start(message: Message) -> None:
     ref = _parse_ref(message)
 
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            ref_code=ref,
-            locale=message.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=message.from_user, ref_code=ref)
         if user.is_banned:
             await message.answer(
                 "⛔️ Доступ к боту ограничен.\n"
@@ -77,14 +70,7 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            ref_code=None,
-            locale=message.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
     await message.answer(

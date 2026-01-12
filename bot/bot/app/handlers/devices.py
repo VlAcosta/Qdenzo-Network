@@ -33,7 +33,7 @@ from ..services.devices import (
     rename_device,
 )
 from ..services.subscriptions import get_or_create_subscription, is_active
-from ..services.users import get_or_create_user
+from ..services.users import ensure_user
 from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
 from ..services.happ_connect import build_happ_links
 from ..utils.text import h
@@ -250,28 +250,14 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
 @router.message(Command("devices"))
 async def cmd_devices(message: Message) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            ref_code=None,
-            locale=message.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=message.from_user)
     await _show_devices(message, user_id=user.id)
 
 
 @router.callback_query(F.data == "devices")
 async def cb_devices(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
     await _show_devices(call, user_id=user.id)
 
 
@@ -299,14 +285,7 @@ async def cb_device_view(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "dev:add")
 async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
         devices = await list_devices(session, user.id)
 
@@ -347,14 +326,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
 
     await state.clear()
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
         if not is_active(sub):

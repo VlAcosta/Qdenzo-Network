@@ -6,7 +6,7 @@ from ..db import session_scope
 from ..keyboards.main import main_menu
 from ..services import get_or_create_subscription
 from ..services.subscriptions import is_active
-from ..services.users import get_or_create_user
+from ..services.users import ensure_user
 from ..utils.telegram import edit_message_text
 from ..utils.text import h
 
@@ -16,14 +16,7 @@ router = Router()
 @router.callback_query(F.data == "back")
 async def cb_back(call: CallbackQuery) -> None:
     async with session_scope() as session:
-        user = await get_or_create_user(
-            session=session,
-            tg_id=call.from_user.id,
-            username=call.from_user.username,
-            first_name=call.from_user.first_name,
-            ref_code=None,
-            locale=call.from_user.language_code,
-        )
+        user = await ensure_user(session=session, tg_user=call.from_user)
 
         if user.is_banned:
             await edit_message_text(
