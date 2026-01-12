@@ -20,7 +20,9 @@ from ..keyboards.devices import (
     devices_list_kb,
 )
 from ..keyboards.nav import nav_kb
-from ..marzban.client import MarzbanClient
+from loguru import logger
+
+from ..marzban.client import MarzbanClient, MarzbanError
 from ..services.devices import (
     DEVICE_TYPES,
     count_active_devices,
@@ -33,8 +35,7 @@ from ..services.devices import (
 from ..services.subscriptions import get_or_create_subscription, is_active
 from ..services.users import get_or_create_user
 from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
-from ..services.happ_crypto import encrypt_subscription_url
-from urllib.parse import quote
+from ..services.happ_connect import build_happ_links
 from ..utils.text import h
 from ..utils.telegram import edit_message_text
 
@@ -50,7 +51,7 @@ def _connect_instruction_text() -> str:
     return (
         "📄 <b>Инструкция по подключению</b>\n\n"
         "1) Установите приложение Happ.\n"
-        "2) Нажмите «Импорт в Happ» (шифрованный импорт) или «Показать обычную ссылку».\n"
+        "2) Нажмите «Add to Happ» или откройте обычную ссылку.\n"
         "3) Подтвердите импорт и дождитесь активации.\n\n"
         "Если импорт не сработал — используйте обычную ссылку и выберите профиль вручную."
     )
@@ -89,11 +90,7 @@ def _pick_connection_url(link: str | None, subscription_url: str | None) -> str 
         return subscription_url
     return subscription_url or link
 
-def _happ_add_link(subscription_url: str) -> str:
-    happ_link = f"happ://add/{subscription_url}"
-    if settings.happ_redirect_base:
-        return f"{settings.happ_redirect_base}?app=happ&k={quote(happ_link, safe='')}"
-    return happ_link
+
 
 
 async def _ensure_install_code(session, device, *, install_limit: int) -> str | None:
@@ -118,38 +115,58 @@ async def _build_connect_links(
     device,
     *,
     install_limit: int,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None]:
     link, subscription_url = await _resolve_device_urls(device)
     base_url = _pick_connection_url(link, subscription_url)
     if not base_url:
-        return None, None, None
+        return None, None
     try:
         install_code = await _ensure_install_code(session, device, install_limit=install_limit)
     except Exception:
         install_code = None
     limited_url = _with_install_id(base_url, install_code) if install_code else base_url
     try:
-        crypt_url = await encrypt_subscription_url(limited_url)
+        _, crypt_url = await build_happ_links(limited_url)
     except Exception:
         crypt_url = None
-    happ_add_url = _happ_add_link(limited_url)
-    return limited_url, crypt_url, happ_add_url
+    return limited_url, crypt_url
+
+
+async def _build_happ_connect_links(session, device, *, install_limit: int, marz: MarzbanClient) -> tuple[str | None, str | None]:
+    link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
+    base_url = _pick_connection_url(link, subscription_url)
+    if not base_url:
+        return None, None
+    try:
+        install_code = await _ensure_install_code(session, device, install_limit=install_limit)
+    except Exception:
+        install_code = None
+    limited_url = _with_install_id(base_url, install_code) if install_code else base_url
+    try:
+        return await build_happ_links(limited_url)
+    except Exception:
+        return limited_url, None
+
+
+def happ_connect_kb(*, plain_url: str, crypt_url: str | None) -> InlineKeyboardMarkup:
+    """Standard one-tap Happ connect keyboard (Variant B)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if crypt_url:
+        rows.append([InlineKeyboardButton(text="🚀 Add to Happ", url=crypt_url)])
+    rows.append([InlineKeyboardButton(text="⬇️ Install Happ", url=settings.happ_url or HAPP_URL_DEFAULT)])
+    rows.append([InlineKeyboardButton(text="🔗 Plain subscription link", url=plain_url)])
+    rows.append([InlineKeyboardButton(text="📄 Instructions", callback_data="happ:help")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _connect_kb(
     *,
     device_id: int,
+    plain_url: str,
     crypt_url: str | None,
-    happ_add_url: str | None,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    rows.append([InlineKeyboardButton(text="⬇️ Установить Happ", url=settings.happ_url or HAPP_URL_DEFAULT)])
-    if happ_add_url:
-        rows.append([InlineKeyboardButton(text="🚀 Подключить в Happ", url=happ_add_url)])
-    if crypt_url:
-        rows.append([InlineKeyboardButton(text="🚀 Импорт в Happ (шифр.)", url=crypt_url)])
-    rows.append([InlineKeyboardButton(text="🔗 Показать обычную ссылку", callback_data=f"dev:show_link:{device_id}")])
-    rows.append([InlineKeyboardButton(text="📄 Инструкция", callback_data=f"dev:instruction:{device_id}")])
+    kb = happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url)
+    rows = list(kb.inline_keyboard)
     rows.append([
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
@@ -173,7 +190,7 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
                 await call_or_message.answer("Устройство не найдено")
             return
         sub = await get_or_create_subscription(session, device.user_id)
-        limited_url, crypt_url, happ_add_url = await _build_connect_links(
+        limited_url, crypt_url = await _build_connect_links(
             session,
             device,
             install_limit=sub.devices_limit,
@@ -198,7 +215,7 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
     )
     if crypt_url is None:
         text += "\n\n⚠️ Шифрованный импорт временно недоступен — используйте обычную ссылку."
-    kb = _connect_kb(device_id=device_id, crypt_url=crypt_url, happ_add_url=happ_add_url)
+    kb = _connect_kb(device_id=device_id, plain_url=limited_url, crypt_url=crypt_url)
     if isinstance(call_or_message, CallbackQuery):
         await edit_message_text(call_or_message, text, reply_markup=kb)
         await call_or_message.answer()
@@ -355,13 +372,35 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         verify_ssl=settings.marzban_verify_ssl,
     )
     try:
-        device = await create_device(
-            session=session,
+        try:
+            device = await create_device(
+                session=session,
+                marz=marz,
+                user=user,
+                sub=sub,
+                device_type=device_type,
+                label=_type_title(device_type),
+            )
+        except MarzbanError as exc:
+            logger.exception(
+                "Marzban provisioning failed for tg_id=%s device_type=%s: %s",
+                user.tg_id,
+                device_type,
+                exc,
+            )
+            await edit_message_text(
+                call,
+                "⚠️ Панель временно недоступна или неверные данные Marzban.\n"
+                "Обратитесь в поддержку.",
+                reply_markup=nav_kb(back_cb="devices", home_cb="back"),
+            )
+            await call.answer()
+            return
+        plain_url, crypt_url = await _build_happ_connect_links(
+            session,
+            device,
+            install_limit=sub.devices_limit,
             marz=marz,
-            user=user,
-            sub=sub,
-            device_type=device_type,
-            label=_type_title(device_type),
         )
     finally:
         await marz.close()
@@ -371,7 +410,20 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         f"✅ Устройство <b>{h(device.label)}</b> добавлено!\n\n"
         "Теперь подключите его 👇",
     )
-    await _show_connect_screen(call, device_id=device.id)
+    if not plain_url:
+        await call.message.answer(
+            "Ссылка для подключения пока недоступна. Попробуйте позже или обратитесь в поддержку."
+        )
+        await call.answer()
+        return
+
+    # Variant B: auto-connect prompt after device creation.
+    await call.message.answer(
+        "✅ Устройство добавлено.\n"
+        "Нажмите кнопку ниже — конфигурация будет импортирована в Happ автоматически.",
+        reply_markup=happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url),
+    )
+    await call.answer()
 
 
 @router.callback_query(F.data.startswith("dev:rename:"))
@@ -473,7 +525,7 @@ async def cb_device_show_link(call: CallbackQuery) -> None:
             await call.answer("Устройство не найдено", show_alert=True)
             return
         sub = await get_or_create_subscription(session, device.user_id)
-        limited_url, _, _ = await _build_connect_links(session, device, install_limit=sub.devices_limit)
+        limited_url, _ = await _build_connect_links(session, device, install_limit=sub.devices_limit)
 
     if not limited_url:
         await call.answer("Ссылка пока недоступна", show_alert=True)
@@ -504,12 +556,13 @@ async def cb_device_instruction(call: CallbackQuery) -> None:
     await call.answer()
 
 @router.callback_query(F.data == "happ:help")
-async def happ_help(call: CallbackQuery):
-    await call.answer()
-    await call.message.answer(
-        "📄 Как подключиться через Happ:\n\n"
-        "1) Нажмите «🚀 Добавить в Happ»\n"
-        "2) Happ откроется и импортирует конфиг\n"
-        "3) Нажмите «Подключить» в приложении\n\n"
-        "Если кнопка не открывает Happ — установите приложение и повторите."
+async def cb_happ_help(call: CallbackQuery) -> None:
+    text = (
+        "📄 <b>Как подключиться через Happ</b>\n\n"
+        "1) Нажмите «Add to Happ».\n"
+        "2) Подтвердите открытие приложения.\n"
+        "3) Внутри Happ нажмите «Connect».\n\n"
+        "Если импорт не сработал — используйте обычную ссылку."
     )
+    await call.message.answer(text)
+    await call.answer()
