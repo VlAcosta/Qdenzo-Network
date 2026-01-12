@@ -11,7 +11,8 @@ from aiogram.client.default import DefaultBotProperties
 from loguru import logger
 
 from .config import settings
-from .db import init_db
+from .db import init_db, session_scope
+from .marzban.client import MarzbanClient
 
 # Handlers
 from .handlers.start import router as start_router
@@ -27,6 +28,7 @@ from .handlers.admin import router as admin_router
 from .handlers.navigation import router as nav_router
 from .handlers.fallback import router as fallback_router
 from .webhooks import start_webhook_server, stop_webhook_server
+from .services.traffic import collect_traffic_snapshots
 
 
 def _build_dp() -> Dispatcher:
@@ -59,12 +61,37 @@ async def main() -> None:
     )
     dp = _build_dp()
     webhook_runner = await start_webhook_server()
+    traffic_task = None
+    if settings.traffic_collect_enabled:
+        traffic_task = asyncio.create_task(_traffic_collector_loop())
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        if traffic_task:
+            traffic_task.cancel()
         await stop_webhook_server(webhook_runner)
         await bot.session.close()
 
+
+async def _traffic_collector_loop() -> None:
+    interval = max(300, settings.traffic_collect_interval_seconds)
+    while True:
+        try:
+            async with session_scope() as session:
+                marz = MarzbanClient(
+                    base_url=str(settings.marzban_base_url),
+                    username=settings.marzban_username,
+                    password=settings.marzban_password,
+                    verify_ssl=settings.marzban_verify_ssl,
+                    api_prefix=settings.marzban_api_prefix,
+                )
+                try:
+                    await collect_traffic_snapshots(session, marz=marz)
+                finally:
+                    await marz.close()
+        except Exception as exc:
+            logger.warning("Traffic collector failed: %s", exc)
+        await asyncio.sleep(interval)
 
 if __name__ == '__main__':
     asyncio.run(main())

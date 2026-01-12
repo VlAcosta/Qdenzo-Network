@@ -149,3 +149,18 @@ class ReferralWindow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     inviter: Mapped['User'] = relationship('User')
+
+
+
+class TrafficSnapshot(Base):
+    __tablename__ = 'traffic_snapshots'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    bytes_up: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default='0')
+    bytes_down: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default='0')
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default='0')
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped['User'] = relationship('User')

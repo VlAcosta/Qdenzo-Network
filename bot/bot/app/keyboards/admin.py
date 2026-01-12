@@ -162,8 +162,8 @@ def admin_subs_kb(user_ids: list[int]) -> InlineKeyboardMarkup:
     for user_id in user_ids:
         rows.append([
             InlineKeyboardButton(text=f'✉️ {user_id}', callback_data=f'admin:subs:msg:{user_id}'),
-            InlineKeyboardButton(text='+7д', callback_data=f'admin:subs:extend:{user_id}:7'),
-            InlineKeyboardButton(text='+30д', callback_data=f'admin:subs:extend:{user_id}:30'),
+            InlineKeyboardButton(text='+7д', callback_data=f'admin:subs_extend:{user_id}:7'),
+            InlineKeyboardButton(text='+30д', callback_data=f'admin:subs_extend:{user_id}:30'),
         ])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='admin:menu')])
     return InlineKeyboardMarkup(inline_keyboard=rows)

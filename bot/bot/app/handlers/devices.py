@@ -75,6 +75,7 @@ async def _resolve_device_urls(device) -> tuple[str | None, str | None]:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
     try:
         link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
@@ -370,6 +371,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
     try:
         try:
@@ -482,6 +484,7 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
     try:
         link, subscription_url = (None, None)

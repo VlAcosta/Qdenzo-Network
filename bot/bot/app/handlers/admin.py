@@ -48,6 +48,7 @@ from ..services.payments import (
     is_yookassa_paid,
 )
 from ..services.subscriptions import get_or_create_subscription, is_active, now_utc
+from ..services.traffic import top_users_by_traffic, total_traffic
 from ..utils.telegram import edit_message_text
 from ..utils.text import fmt_dt, h
 
@@ -92,6 +93,7 @@ def _marzban_client() -> MarzbanClient:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
 
 
@@ -692,14 +694,24 @@ async def cb_admin_subs_msg(call: CallbackQuery) -> None:
     await call.answer("✅ Сообщение отправлено")
 
 
-@router.callback_query(F.data.startswith("admin:subs:extend:"))
+@router.callback_query(F.data.startswith("admin:subs_extend:"))
 async def cb_admin_subs_extend(call: CallbackQuery) -> None:
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
-    _, _, user_id_s, days_s = call.data.split(":")
-    user_id = int(user_id_s)
-    days = int(days_s)
+    parts = call.data.rsplit(":", 2)
+    if len(parts) != 3:
+        logger.warning("Admin subs_extend malformed callback: %s", call.data)
+        await call.answer("Неверные данные кнопки. Обновите меню.", show_alert=True)
+        return
+    user_id_s, days_s = parts[-2], parts[-1]
+    try:
+        user_id = int(user_id_s)
+        days = int(days_s)
+    except ValueError:
+        logger.warning("Admin subs_extend invalid data: %s", call.data)
+        await call.answer("Неверные данные кнопки. Обновите меню.", show_alert=True)
+        return
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
@@ -732,10 +744,37 @@ async def cb_admin_traffic(call: CallbackQuery) -> None:
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
+    if not settings.traffic_collect_enabled:
+        text = (
+            "📈 <b>Трафик</b>\n\n"
+            "Сбор трафика отключён.\n"
+            "Включите: TRAFFIC_COLLECT_ENABLED=true и задайте "
+            "TRAFFIC_COLLECT_INTERVAL_SECONDS."
+        )
+        await edit_message_text(call, text, reply_markup=admin_back_kb())
+        await call.answer()
+        return
+
+    try:
+        async with session_scope() as session:
+            total_1d = await total_traffic(session, days=1)
+            total_7d = await total_traffic(session, days=7)
+            total_30d = await total_traffic(session, days=30)
+            top_7d = await top_users_by_traffic(session, days=7, limit=10)
+    except Exception:
+        logger.exception("Admin traffic failed")
+        await edit_message_text(call, "⚠️ Не удалось загрузить трафик.", reply_markup=admin_back_kb())
+        await call.answer()
+        return
+
+    top_lines = [f"• {user_id}: {bytes_used} B" for user_id, bytes_used in top_7d] or ["—"]
     text = (
         "📈 <b>Трафик</b>\n\n"
-        "Данные будут доступны после настройки сбора статистики.\n"
-        "Подсказка: подключите сбор трафика через Marzban API и периодический job."
+        f"Сегодня: <b>{total_1d} B</b>\n"
+        f"7 дней: <b>{total_7d} B</b>\n"
+        f"30 дней: <b>{total_30d} B</b>\n\n"
+        "<b>Топ пользователей за 7 дней:</b>\n"
+        + "\n".join(top_lines)
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
     await call.answer()
@@ -770,12 +809,15 @@ async def cb_admin_quality(call: CallbackQuery) -> None:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.post("https://crypto.happ.su/api.php", json={"url": "https://example.com"})
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("url") or data.get("result") or data.get("link"):
-            happ_status = "OK"
+        if resp.status_code != 200:
+            happ_status = f"FAIL ({resp.status_code}: {resp.text[:120]})"
         else:
-            happ_status = "FAIL (bad response)"
+            data = resp.json()
+            link = data.get("url") or data.get("result") or data.get("link")
+            if link and str(link).startswith("happ://"):
+                happ_status = "OK"
+            else:
+                happ_status = f"FAIL (bad response: {str(link)[:80]})"
     except Exception as exc:
         happ_status = f"FAIL ({exc})"
     finally:

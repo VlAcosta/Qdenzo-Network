@@ -29,6 +29,7 @@ class MarzbanClient:
         timeout: float = 20.0,
         max_retries: int = 3,
         backoff_base: float = 0.5,
+        api_prefix: str | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.username = username
@@ -43,10 +44,13 @@ class MarzbanClient:
             follow_redirects=True,
         )
         self._token: Optional[MarzbanAdminToken] = None
-
-        # если base_url уже заканчивается на /api, не добавляем /api второй раз
-        self.api_prefix = "" if self.base_url.endswith("/api") else "/api"
-
+        if api_prefix is None:
+            api_prefix = "/api"
+        if api_prefix == "/":
+            api_prefix = ""
+        if api_prefix and not api_prefix.startswith("/"):
+            api_prefix = f"/{api_prefix}"
+        self.api_prefix = api_prefix
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -57,6 +61,8 @@ class MarzbanClient:
         endpoints = [
             f"{self.api_prefix}/admin/token",
             f"{self.api_prefix}/admin/token/",
+            f"{self.api_prefix}/token",
+            f"{self.api_prefix}/token/",
         ]
 
         last = None
@@ -69,6 +75,9 @@ class MarzbanClient:
                     token_type=payload.get("token_type", "bearer"),
                 )
                 return
+            if r.status_code in {404, 405}:
+                last = r
+                continue
             last = r
 
         raise MarzbanError(f"Login failed: {last.status_code} {last.text}")

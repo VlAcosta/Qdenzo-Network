@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     marzban_username: str = Field(..., alias='MARZBAN_USERNAME')
     marzban_password: str = Field(..., alias='MARZBAN_PASSWORD')
     marzban_verify_ssl: bool = Field(True, alias='MARZBAN_VERIFY_SSL')
+    marzban_api_prefix: str = Field('/api', alias='MARZBAN_API_PREFIX')
 
     # How to provide config links to users:
     # - auto: prefer Marzban user 'links', fallback to subscription_url, fallback to manual builder
@@ -140,6 +141,9 @@ class Settings(BaseSettings):
     happ_proxy_provider_code: str | None = Field(None, alias="HAPP_PROXY_PROVIDER_CODE")
     happ_proxy_auth_key: str | None = Field(None, alias="HAPP_PROXY_AUTH_KEY")
 
+    # Traffic collection
+    traffic_collect_enabled: bool = Field(False, alias="TRAFFIC_COLLECT_ENABLED")
+    traffic_collect_interval_seconds: int = Field(3600, alias="TRAFFIC_COLLECT_INTERVAL_SECONDS")
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

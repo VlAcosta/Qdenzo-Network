@@ -83,6 +83,17 @@ async def run_migrations(engine: AsyncEngine) -> None:
         "CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id);",
         "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders (status);",
         "CREATE INDEX IF NOT EXISTS ix_referral_events_inviter_id ON referral_events (inviter_id);",
+        "CREATE TABLE IF NOT EXISTS traffic_snapshots ("
+        "id SERIAL PRIMARY KEY, "
+        "user_id INTEGER NOT NULL, "
+        "tg_id BIGINT NOT NULL, "
+        "bytes_up BIGINT NOT NULL DEFAULT 0, "
+        "bytes_down BIGINT NOT NULL DEFAULT 0, "
+        "total_bytes BIGINT NOT NULL DEFAULT 0, "
+        "collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+        ");",
+        "CREATE INDEX IF NOT EXISTS ix_traffic_snapshots_user_id ON traffic_snapshots (user_id);",
+        "CREATE INDEX IF NOT EXISTS ix_traffic_snapshots_collected_at ON traffic_snapshots (collected_at);",
     ]
 
     async with engine.begin() as conn:
@@ -165,6 +176,26 @@ BEGIN
   ) THEN
     ALTER TABLE orders
       ADD CONSTRAINT orders_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE;
+  END IF;
+END $$;
+"""
+            ))
+        except Exception as e:
+            logger.warning(f"FK migration failed: {type(e).__name__}: {e}")
+
+        # traffic_snapshots.user_id
+        try:
+            await conn.execute(text(
+                """
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'traffic_snapshots_user_id_fkey'
+  ) THEN
+    ALTER TABLE traffic_snapshots
+      ADD CONSTRAINT traffic_snapshots_user_id_fkey
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE;
   END IF;

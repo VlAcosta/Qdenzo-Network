@@ -46,6 +46,7 @@ def _marzban_client() -> MarzbanClient:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
 
 
@@ -701,6 +702,7 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
 
     async with session_scope() as session:

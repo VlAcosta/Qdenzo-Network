@@ -9,12 +9,16 @@ from typing import Any
 from loguru import logger
 import httpx
 
+
 class HappCryptoError(RuntimeError):
     pass
+
+
 _CACHE: dict[str, tuple[float, str]] = {}
 _DEFAULT_TTL_SECONDS = 900
-_MAX_RETRIES = 3
+_MAX_RETRIES = 2
 _RETRY_BACKOFF = 0.6
+
 
 def _cache_get(url: str) -> str | None:
     cached = _CACHE.get(url)
@@ -26,9 +30,9 @@ def _cache_get(url: str) -> str | None:
         return None
     return value
 
+
 def _cache_set(url: str, value: str, ttl_seconds: int) -> None:
     _CACHE[url] = (time.monotonic() + ttl_seconds, value)
-
 
 
 async def encrypt_subscription_url(url: str) -> str | None:
@@ -39,22 +43,26 @@ async def encrypt_subscription_url(url: str) -> str | None:
     cached = _cache_get(url)
     if cached:
         return cached
-
     try:
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
                     r = await c.post("https://crypto.happ.su/api.php", json={"url": url})
-                    r.raise_for_status()
+                    if r.status_code != 200:
+                        raise HappCryptoError(
+                            f"Crypto API status {r.status_code}: {r.text[:120]}"
+                        )
                     data: Any = r.json()
                 # Делает tolerant parsing, т.к. формат ответа может быть {url: "..."} или {result: "..."}
                 crypt = data.get("url") or data.get("result") or data.get("link")
                 if not crypt:
                     raise HappCryptoError(f"Crypto API response missing link: {data}")
                 crypt = str(crypt)
+                if not crypt.startswith("happ://"):
+                    raise HappCryptoError(f"Crypto API returned unexpected link: {crypt}")
                 _cache_set(url, crypt, _DEFAULT_TTL_SECONDS)
                 return crypt
-            except (httpx.RequestError, httpx.HTTPStatusError, HappCryptoError) as exc:
+            except (httpx.RequestError, ValueError, HappCryptoError) as exc:
                 logger.warning("Happ crypto request failed (attempt %s/%s): %s", attempt, _MAX_RETRIES, exc)
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_BACKOFF * attempt)

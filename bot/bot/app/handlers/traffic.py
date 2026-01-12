@@ -46,6 +46,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
         username=settings.marzban_username,
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
     )
 
     total_used = 0
