@@ -9,7 +9,9 @@ from sqlalchemy import asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..marzban.client import MarzbanClient
+from loguru import logger
+
+from ..marzban.client import MarzbanClient, MarzbanError
 from ..models import Device, Subscription, User
 from .subscriptions import is_active, now_utc
 
@@ -82,15 +84,23 @@ async def create_device(
         expire_ts = int(sub.expires_at.replace(tzinfo=timezone.utc).timestamp())
         status = 'active'
 
-    # Create in Marzban
-    m_user = await marz.create_user(
-        username=m_username,
-        expire=expire_ts,
-        status=status,
-        note=note,
-        # if you want to restrict to a specific inbound set tags in MARZBAN_INBOUNDS_JSON
-        # inbounds=settings.marzban_inbounds,
-    )
+    try:
+        m_user = await marz.create_user(
+            username=m_username,
+            expire=expire_ts,
+            status=status,
+            note=note,
+            # if you want to restrict to a specific inbound set tags in MARZBAN_INBOUNDS_JSON
+            # inbounds=settings.marzban_inbounds,
+        )
+    except MarzbanError as exc:
+        logger.warning(
+            "Marzban create_user failed for tg_id=%s device_type=%s: %s",
+            user.tg_id,
+            device_type,
+            exc,
+        )
+        raise
 
     device = Device(
         user_id=user.id,

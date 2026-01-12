@@ -56,6 +56,7 @@ class MarzbanClient:
 
     async def _login(self) -> None:
         data = {"username": self.username, "password": self.password}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         # некоторые инсталлы требуют trailing slash
         endpoints = [
@@ -67,7 +68,7 @@ class MarzbanClient:
 
         last = None
         for ep in endpoints:
-            r = await self._client.post(ep, data=data)
+            r = await self._client.post(ep, data=data, headers=headers)
             if r.status_code == 200:
                 payload = r.json()
                 self._token = MarzbanAdminToken(
@@ -79,6 +80,10 @@ class MarzbanClient:
                 last = r
                 continue
             last = r
+
+
+        if last is not None:
+            logger.debug("Marzban login failed: %s %s", last.status_code, last.text[:200])
 
         raise MarzbanError(f"Login failed: {last.status_code} {last.text}")
 
