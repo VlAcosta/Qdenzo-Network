@@ -21,6 +21,7 @@ from ..services.payments import (
     is_cryptopay_paid,
     is_yookassa_paid,
 )
+from ..services.payments.common import update_order_meta
 
 from ..config import settings
 from ..db import session_scope
@@ -290,7 +291,8 @@ async def cb_plan(call: CallbackQuery, bot: Bot) -> None:
             crypto_enabled=_cryptopay_enabled(),
             crypto_url=settings.crypto_pay_url,
             stars_enabled=_stars_enabled(),
-            manual_enabled=settings.payment_manual_enabled,
+            manual_enabled=settings.payment_manual_enabled
+            and not (_yookassa_enabled() or _cryptopay_enabled() or _stars_enabled()),
         )
     )
 
@@ -355,6 +357,13 @@ async def cb_pay_yookassa(call: CallbackQuery) -> None:
             order.currency = "RUB"
             order.raw_provider_payload = json.dumps(payment.raw, ensure_ascii=False)
             order.payment_method = "yookassa"
+            update_order_meta(
+                order,
+                {
+                    "yookassa_payment_id": payment.payment_id,
+                    "yookassa_confirmation_url": payment.confirmation_url,
+                },
+            )
             session.add(order)
             await session.commit()
 
@@ -410,6 +419,7 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
                     amount=amount,
                     asset=getattr(settings, "cryptopay_asset", "USDT"),
                     description=f"Заказ #{order.id}",
+                    payload=payload,
                     expires_in=settings.cryptopay_invoice_expires_in,
                 )
             except Exception:
@@ -425,6 +435,13 @@ async def cb_pay_cryptopay(call: CallbackQuery) -> None:
             order.currency = settings.cryptopay_asset
             order.raw_provider_payload = json.dumps(invoice.raw, ensure_ascii=False)
             order.payment_method = "cryptopay"
+            update_order_meta(
+                order,
+                {
+                    "cryptopay_invoice_id": invoice.invoice_id,
+                    "cryptopay_pay_url": invoice.pay_url,
+                },
+            )
             session.add(order)
             await session.commit()
 
@@ -464,6 +481,12 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             cryptopay_token = getattr(settings, "cryptopay_token", None)
             client = CryptoPayClient(cryptopay_token)
             invoice = await client.get_invoice(int(invoice_id))
+            try:
+                invoice = await client.get_invoice(int(invoice_id))
+            except Exception:
+                logger.exception("Failed to fetch CryptoPay invoice %s", invoice_id)
+                await call.answer("Не удалось проверить оплату. Попробуйте позже.", show_alert=True)
+                return
             if not invoice or not is_cryptopay_paid(invoice.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)
                 return
@@ -479,7 +502,12 @@ async def cb_check_payment(call: CallbackQuery) -> None:
             shop_id = getattr(settings, "yookassa_shop_id", None)
             secret_key = getattr(settings, "yookassa_secret_key", None)
             client = YooKassaClient(shop_id, secret_key)
-            payment = await client.get_payment(str(payment_id))
+            try:
+                payment = await client.get_payment(str(payment_id))
+            except Exception:
+                logger.exception("Failed to fetch YooKassa payment %s", payment_id)
+                await call.answer("Не удалось проверить оплату. Попробуйте позже.", show_alert=True)
+                return
             if not is_yookassa_paid(payment.status):
                 await call.answer("Оплата еще не подтверждена.", show_alert=True)
                 return
@@ -690,6 +718,10 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
         if order.user_id != user.id:
             await message.answer("Оплата получена, но заказ не ваш. Напишите в поддержку.")
             return
+        if order.status != "pending":
+            await message.answer("Оплата уже обработана. Спасибо!")
+            return
+
 
         order.provider = "stars"
         order.payment_method = "stars"
@@ -697,6 +729,7 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
         order.currency = sp.currency or "XTR"
         order.amount = str(sp.total_amount)
         order.raw_provider_payload = json.dumps(sp.model_dump(), ensure_ascii=False)
+        update_order_meta(order, {"telegram_payment_charge_id": sp.telegram_payment_charge_id})
         session.add(order)
         await session.commit()
 

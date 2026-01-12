@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from loguru import logger
 
 API_BASE = "https://pay.crypt.bot/api"
 
@@ -27,20 +29,51 @@ class CryptoPayError(RuntimeError):
 class CryptoPayClient:
     """Minimal Crypto Pay API client (create/get invoices)."""
 
-    def __init__(self, token: str, *, api_base: str = API_BASE, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        token: str,
+        *,
+        api_base: str = API_BASE,
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        backoff_base: float = 0.6,
+    ) -> None:
         self._token = token
         self._api_base = api_base
         self._timeout = timeout
+        self._max_retries = max_retries
+        self._backoff_base = backoff_base
 
     async def _request(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Crypto-Pay-API-Token": self._token}
-        async with httpx.AsyncClient(base_url=self._api_base, timeout=self._timeout) as client:
-            response = await client.post(f"/{method}", json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            raise CryptoPayError(f"CryptoPay {method} failed: {data}")
-        return data.get("result", {})
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                async with httpx.AsyncClient(base_url=self._api_base, timeout=self._timeout) as client:
+                    response = await client.post(f"/{method}", json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                if not data.get("ok"):
+                    raise CryptoPayError(f"CryptoPay {method} failed: {data}")
+                return data.get("result", {})
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status = exc.response.status_code
+                if status >= 500 and attempt < self._max_retries:
+                    logger.warning("CryptoPay %s failed (%s). Retrying...", method, status)
+                    await asyncio.sleep(self._backoff_base * attempt)
+                    continue
+                raise
+            except httpx.RequestError as exc:
+                last_error = exc
+                logger.warning("CryptoPay request error (%s/%s): %s", attempt, self._max_retries, exc)
+                if attempt < self._max_retries:
+                    await asyncio.sleep(self._backoff_base * attempt)
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise CryptoPayError("CryptoPay request failed without response")
 
     async def create_invoice(
         self,

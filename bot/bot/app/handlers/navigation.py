@@ -43,3 +43,8 @@ async def cb_back(call: CallbackQuery) -> None:
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
     await call.answer()
+
+
+@router.callback_query(F.data.in_({"home", "main", "menu"}))
+async def cb_home_alias(call: CallbackQuery) -> None:
+    await cb_back(call)

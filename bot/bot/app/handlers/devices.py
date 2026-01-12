@@ -303,7 +303,10 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
         return
 
     if len([d for d in devices if d.status != "deleted"]) >= sub.devices_limit:
-        await call.answer("Лимит устройств исчерпан", show_alert=True)
+        await call.answer(
+            "Лимит устройств исчерпан. Удалите или заморозьте старое устройство, чтобы добавить новое.",
+            show_alert=True,
+        )
         await cb_devices(call)
         return
 
@@ -499,3 +502,14 @@ async def cb_device_instruction(call: CallbackQuery) -> None:
     ]])
     await edit_message_text(call, text, reply_markup=kb)
     await call.answer()
+
+@router.callback_query(F.data == "happ:help")
+async def happ_help(call: CallbackQuery):
+    await call.answer()
+    await call.message.answer(
+        "📄 Как подключиться через Happ:\n\n"
+        "1) Нажмите «🚀 Добавить в Happ»\n"
+        "2) Happ откроется и импортирует конфиг\n"
+        "3) Нажмите «Подключить» в приложении\n\n"
+        "Если кнопка не открывает Happ — установите приложение и повторите."
+    )

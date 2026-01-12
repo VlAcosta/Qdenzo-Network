@@ -126,11 +126,6 @@ async def cb_sub_renew(call: CallbackQuery) -> None:
         text,
         reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:renew"),
     )
-    await edit_message_text(
-        call,
-        text,
-        reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:renew"),
-    )
     await call.answer()
 
 

@@ -97,7 +97,7 @@ async def create_device(
         slot=slot,
         device_type=device_type,
         label=label,
-        status='active',
+        status=status,
         profile_code=user.profile_code or 'smart',
         marzban_username=m_username,
         marzban_user_id=str(m_user.get('id') or ''),

@@ -121,7 +121,11 @@ async def _handle_cryptopay(invoice_id: int | None, payload_raw: str | None) -> 
             order_id = None
 
     client = CryptoPayClient(cryptopay_token)
-    invoice = await client.get_invoice(int(invoice_id))
+    try:
+        invoice = await client.get_invoice(int(invoice_id))
+    except Exception as exc:
+        logger.exception("CryptoPay webhook: failed to fetch invoice %s: %s", invoice_id, exc)
+        return
     if not invoice or not is_cryptopay_paid(invoice.status):
         return
 
@@ -146,7 +150,11 @@ async def _handle_yookassa(payment_id: str | None, metadata: dict[str, Any] | No
             order_id = None
 
     client = YooKassaClient(shop_id, secret_key)
-    payment = await client.get_payment(payment_id)
+    try:
+        payment = await client.get_payment(payment_id)
+    except Exception as exc:
+        logger.exception("YooKassa webhook: failed to fetch payment %s: %s", payment_id, exc)
+        return
     if not is_yookassa_paid(payment.status):
         return
 
@@ -198,6 +206,10 @@ async def yookassa_webhook(request: web.Request) -> web.Response:
         data = await request.json()
     except Exception:
         logger.warning("YooKassa webhook: invalid JSON")
+        return web.Response(text="ok")
+    
+    event = data.get("event")
+    if event and event != "payment.succeeded":
         return web.Response(text="ok")
 
     payment = data.get("object") or {}
