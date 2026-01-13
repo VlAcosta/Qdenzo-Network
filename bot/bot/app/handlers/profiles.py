@@ -17,7 +17,7 @@ from ..services.devices import get_device, list_devices, set_device_profile, typ
 from ..services.users import get_user_by_tg_id
 from ..services.profiles import get_profile_code, set_profile_code
 from ..services.subscriptions import get_or_create_subscription, is_active
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 from ..utils.text import h
 
 router = Router()
@@ -36,6 +36,7 @@ def _allowed_profiles(plan_code: str) -> set[str]:
 @router.callback_query(F.data.in_({"profiles", "modes"}))
 @router.message(Command("profiles"))
 async def show_profiles(event) -> None:
+    await safe_answer_callback(call)
     if isinstance(event, Message):
         tg_id = event.from_user.id
         answer = event.answer
@@ -79,11 +80,12 @@ async def show_profiles(event) -> None:
 
 @router.callback_query(F.data == "profiles:account")
 async def cb_profiles_account(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
 
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer("Сначала /start", show_alert=True)
+            await  safe_answer_callback(call, "Сначала /start", show_alert=True)
             return
 
         sub = await get_or_create_subscription(session, user.id)
@@ -95,20 +97,21 @@ async def cb_profiles_account(call: CallbackQuery) -> None:
             "⛔️ Режимы доступны только при активной подписке.",
             reply_markup=nav_kb(back_cb="buy", home_cb="back"),
         )
-        await call.answer()
+        await  safe_answer_callback(call, )
         return
 
     allowed = _allowed_profiles(sub.plan_code)
     await _render_account_modes(call, current=current, allowed=allowed)
-    await call.answer()
+    await  safe_answer_callback(call, )
 
 
 @router.callback_query(F.data == "profiles:device")
 async def cb_profiles_device(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer("Сначала /start", show_alert=True)
+            await  safe_answer_callback(call, "Сначала /start", show_alert=True)
             return
 
         sub = await get_or_create_subscription(session, user.id)
@@ -120,7 +123,7 @@ async def cb_profiles_device(call: CallbackQuery) -> None:
             "⛔️ Режимы доступны только при активной подписке.",
             reply_markup=nav_kb(back_cb="buy", home_cb="back"),
         )
-        await call.answer()
+        await  safe_answer_callback(call, )
         return
 
     items = [
@@ -134,7 +137,7 @@ async def cb_profiles_device(call: CallbackQuery) -> None:
             "У вас пока нет устройств. Сначала добавьте устройство.",
             reply_markup=nav_kb(back_cb="profiles", home_cb="back"),
         )
-        await call.answer()
+        await  safe_answer_callback(call, )
         return
 
     await edit_message_text(
@@ -142,17 +145,18 @@ async def cb_profiles_device(call: CallbackQuery) -> None:
         "📱 <b>Выберите устройство</b>, чтобы применить режим:",
         reply_markup=profiles_device_list_kb(items),
     )
-    await call.answer()
+    await  safe_answer_callback(call, )
 
 
 @router.callback_query(F.data.startswith("profiles:device:"))
 async def cb_profiles_device_modes(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     device_id = int(call.data.split(":")[-1])
 
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer("Сначала /start", show_alert=True)
+            await  safe_answer_callback(call, "Сначала /start", show_alert=True)
             return
 
         sub = await get_or_create_subscription(session, user.id)
@@ -164,80 +168,83 @@ async def cb_profiles_device_modes(call: CallbackQuery) -> None:
             "⛔️ Режимы доступны только при активной подписке.",
             reply_markup=nav_kb(back_cb="buy", home_cb="back"),
         )
-        await call.answer()
+        await  safe_answer_callback(call, )
         return
 
     if not device or device.status == "deleted":
-        await call.answer("Устройство не найдено", show_alert=True)
+        await  safe_answer_callback(call, "Устройство не найдено", show_alert=True)
         return
 
     await _render_device_modes(call, device=device, sub=sub)
-    await call.answer()
+    await  safe_answer_callback(call, )
 
 
 @router.callback_query(F.data.startswith("profile_apply:account:"))
 async def cb_apply_to_account(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     code = call.data.split(":")[-1]
 
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer("Сначала /start", show_alert=True)
+            await  safe_answer_callback(call, "Сначала /start", show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
         if not is_active(sub):
-            await call.answer("Подписка не активна", show_alert=True)
+            await  safe_answer_callback(call, "Подписка не активна", show_alert=True)
             return
 
         allowed = _allowed_profiles(sub.plan_code)
         if code not in allowed:
-            await call.answer("Недоступно на вашем тарифе", show_alert=True)
+            await  safe_answer_callback(call, "Недоступно на вашем тарифе", show_alert=True)
             return
 
         await set_profile_code(session, user.id, code)
 
     await _render_account_modes(call, current=code, allowed=allowed)
-    await call.answer("✅ Применено")
+    await  safe_answer_callback(call, "✅ Применено")
 
 
 @router.callback_query(F.data.startswith("profile_apply:device:"))
 async def cb_apply_to_device(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     _, _, device_id_s, code = call.data.split(":", 3)
     device_id = int(device_id_s)
 
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer("Сначала /start", show_alert=True)
+            await  safe_answer_callback(call, "Сначала /start", show_alert=True)
             return
 
         sub = await get_or_create_subscription(session, user.id)
         if not is_active(sub):
-            await call.answer("Подписка не активна", show_alert=True)
+            await  safe_answer_callback(call, "Подписка не активна", show_alert=True)
             return
 
         allowed = _allowed_profiles(sub.plan_code)
         if code not in allowed:
-            await call.answer("Недоступно на вашем тарифе", show_alert=True)
+            await  safe_answer_callback(call, "Недоступно на вашем тарифе", show_alert=True)
             return
 
         device = await get_device(session, device_id, user_id=user.id)
         if not device or device.status == "deleted":
-            await call.answer("Устройство не найдено", show_alert=True)
+            await  safe_answer_callback(call, "Устройство не найдено", show_alert=True)
             return
 
         if code not in {p[0] for p in PROFILES}:
-            await call.answer("Неизвестный режим", show_alert=True)
+            await  safe_answer_callback(call, "Неизвестный режим", show_alert=True)
             return
 
 
         device = await set_device_profile(session, device, code)
 
     await _render_device_modes(call, device=device, sub=sub)
-    await call.answer("✅ Применено")
+    await  safe_answer_callback(call, "✅ Применено")
 
 
 async def _render_device_modes(call: CallbackQuery, *, device, sub) -> None:
+    await safe_answer_callback(call)
     allowed = _allowed_profiles(sub.plan_code)
     current = device.profile_code
 
@@ -250,6 +257,7 @@ async def _render_device_modes(call: CallbackQuery, *, device, sub) -> None:
 
 
 async def _render_account_modes(call: CallbackQuery, *, current: str | None, allowed: set[str]) -> None:
+    await safe_answer_callback(call)
     text = (
         "👤 <b>Режимы для аккаунта</b>\n\n"
         f"Текущий режим: <b>{h(current or '—')}</b>\n\n"

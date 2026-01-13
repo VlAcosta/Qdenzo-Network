@@ -14,7 +14,7 @@ from ..marzban.client import MarzbanClient
 from ..services.devices import DEVICE_TYPES, list_devices
 from ..services.subscriptions import get_or_create_subscription
 from ..services.users import get_user_by_tg_id
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 
 router = Router()
 
@@ -87,6 +87,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
 
 @router.callback_query(F.data == 'traffic:buy')
 async def cb_traffic_buy(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     text = (
         "<b>➕ Докупить трафик</b>\n\n"
         "• +0.5 ТБ — 149 ₽ (до конца текущего периода)\n"
@@ -95,15 +96,16 @@ async def cb_traffic_buy(call: CallbackQuery) -> None:
         "Для покупки напишите в поддержку и приложите оплату."
     )
     await edit_message_text(call, text, reply_markup=nav_kb(back_cb='traffic', home_cb='back'))
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == 'traffic')
 async def cb_traffic(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer('Сначала /start', show_alert=True)
+            await safe_answer_callback(call, 'Сначала /start', show_alert=True)
             return
         await _render(call, user_id=user.id, tg_id=user.tg_id, edit=True)
 

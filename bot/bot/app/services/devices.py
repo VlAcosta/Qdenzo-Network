@@ -74,7 +74,7 @@ async def create_device(
     slot = await next_free_slot(devices, sub.devices_limit)
     if not slot:
         raise ValueError('devices_limit_reached')
-
+    existing_device = next((d for d in devices if d.slot == slot), None)
     m_username = _marzban_username(user.tg_id, slot)
     note = f"tg_id={user.tg_id};device_slot={slot};label={label}"
 
@@ -102,21 +102,34 @@ async def create_device(
         )
         raise
 
-    device = Device(
-        user_id=user.id,
-        slot=slot,
-        device_type=device_type,
-        label=label,
-        status=status,
-        profile_code=user.profile_code or 'smart',
-        marzban_username=m_username,
-        marzban_user_id=str(m_user.get('id') or ''),
-        created_at=now_utc(),
-        updated_at=now_utc(),
-    )
-    session.add(device)
-    await session.commit()
-    await session.refresh(device)
+    if existing_device:
+        existing_device.device_type = device_type
+        existing_device.label = label
+        existing_device.status = status
+        existing_device.profile_code = user.profile_code or 'smart'
+        existing_device.marzban_username = m_username
+        existing_device.marzban_user_id = str(m_user.get('id') or existing_device.marzban_user_id or '')
+        existing_device.updated_at = now_utc()
+        session.add(existing_device)
+        await session.commit()
+        await session.refresh(existing_device)
+        device = existing_device
+    else:
+        device = Device(
+            user_id=user.id,
+            slot=slot,
+            device_type=device_type,
+            label=label,
+            status=status,
+            profile_code=user.profile_code or 'smart',
+            marzban_username=m_username,
+            marzban_user_id=str(m_user.get('id') or ''),
+            created_at=now_utc(),
+            updated_at=now_utc(),
+        )
+        session.add(device)
+        await session.commit()
+        await session.refresh(device)
     user.last_device_id = device.id
     user.last_device_type = device.device_type
     user.last_device_label = device.label

@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 
+from aiogram import F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from aiogram import Router
 
 from ..config import settings
 from ..db import session_scope
 from ..keyboards.main import main_menu
+from ..keyboards.onboarding import onboarding_continue_kb, onboarding_finish_kb, onboarding_start_kb
 from ..services.subscriptions import is_active
 from ..services import get_or_create_subscription
 from ..services.users import ensure_user
 from ..utils.text import h
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html
 
 router = Router()
 
@@ -25,6 +28,13 @@ def _parse_ref(message: Message) -> str | None:
         return arg.replace("ref_", "", 1)
     return None
 
+def _main_menu_text(user) -> str:
+    return (
+        "<b>Главное меню</b>\n\n"
+        f"ID: <code>{user.tg_id}</code>\n"
+        "Баланс: — ₽\n\n"
+        "Выберите действие ниже 👇"
+    )
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
@@ -41,28 +51,47 @@ async def cmd_start(message: Message) -> None:
 
         sub = await get_or_create_subscription(session, user.id)
         has_sub = is_active(sub)
-
-    caption = (
-        f"🏠 <b>Главное меню</b> (ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>)\n\n"
-        "Выберите действие ниже 👇\n\n"
-        f"<i>Поддержка:</i> {h(settings.support_username)}"
-    )
-
+    if ref is None and not user.onboarding_done:
+        text = (
+            "Добро пожаловать в qdenzo network. 👋\n\n"
+            "Мы создаём частную сеть с акцентом\n"
+            "на стабильность, скорость и приватность\n"
+            "даже в условиях сетевых ограничений.\n\n"
+            "Подключение занимает меньше минуты.\n"
+            "Нажмите «Старт», чтобы продолжить."
+        )
+        photo_path = settings.start_photo_path
+        if photo_path:
+            try:
+                photo = FSInputFile(str(photo_path))
+                await message.answer_photo(
+                    photo=photo,
+                    caption=text,
+                    reply_markup=onboarding_start_kb(),
+                    parse_mode="HTML",
+                )
+                return
+            except Exception:
+                pass
+        await send_html(message, text, reply_markup=onboarding_start_kb())
+        return
     photo_path = settings.start_photo_path
     if photo_path:
         try:
             photo = FSInputFile(str(photo_path))
             await message.answer_photo(
                 photo=photo,
-                caption=caption,
+                caption=_main_menu_text(user),
                 reply_markup=main_menu(user.is_admin, has_subscription=has_sub),
+                parse_mode="HTML",
             )
             return
         except Exception:
             pass
 
-    await message.answer(
-        caption,
+    await send_html(
+        message,
+        _main_menu_text(user),
         reply_markup=main_menu(user.is_admin, has_subscription=has_sub),
     )
 
@@ -73,8 +102,44 @@ async def cmd_menu(message: Message) -> None:
         user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
-    await message.answer(
-        f"🏠 <b>Главное меню</b> (ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>)\n\n"
-        "Выберите действие 👇",
+    await send_html(
+        message,
+        _main_menu_text(user),
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
+
+
+
+@router.callback_query(F.data == "onb:2")
+async def cb_onboarding_step2(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    text = (
+        "Вы находитесь в qdenzo network.\n\n"
+        "Это частная сеть для стабильного и защищённого\n"
+        "доступа к интернету без сложных настроек.\n\n"
+        "Подключение происходит в несколько шагов.\n"
+        "Вы сможете проверить работу сервиса\n"
+        "перед выбором тарифа."
+    )
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await send_html(call, text, reply_markup=onboarding_continue_kb())
+
+
+@router.callback_query(F.data == "onb:3")
+async def cb_onboarding_step3(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    text = (
+        "Вы можете попробовать qdenzo network бесплатно\n"
+        "или перейти сразу в главное меню сервиса.\n\n"
+        "Бесплатный доступ позволит оценить стабильность\n"
+        "и скорость подключения перед выбором тарифа."
+    )
+    await edit_message_text(call, text, reply_markup=onboarding_finish_kb())
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        user.onboarding_done = True
+        session.add(user)
+        await session.commit()

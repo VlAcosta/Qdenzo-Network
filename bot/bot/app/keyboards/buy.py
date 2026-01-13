@@ -32,3 +32,19 @@ def trial_activated_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
         ],
     ])
+
+def subscription_plans_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Попробовать бесплатно (48 часов)", callback_data="plan:trial:0")],
+        [InlineKeyboardButton(text="Start", callback_data="plan_group:start")],
+        [InlineKeyboardButton(text="Pro", callback_data="plan_group:pro")],
+        [InlineKeyboardButton(text="Family", callback_data="plan_group:family")],
+        [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="buy:promo")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+    ])
+
+
+def promo_input_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="buy")],
+    ])

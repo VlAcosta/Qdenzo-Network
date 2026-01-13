@@ -55,8 +55,7 @@ async def activate_trial(session: AsyncSession, user: User) -> tuple[bool, str]:
     sub = await get_or_create_subscription(session, user.id)
 
     if sub.trial_used:
-        return False, "Trial уже был использован."
-
+        return False, "Бесплатный доступ уже был использован."
     # If user already has an active paid plan, do not allow trial.
     if is_active(sub) and sub.plan_code != 'trial':
         return False, "У вас уже есть активная подписка."
@@ -72,7 +71,7 @@ async def activate_trial(session: AsyncSession, user: User) -> tuple[bool, str]:
     session.add(sub)
     await session.commit()
     await session.refresh(sub)
-    return True, "Trial активирован."
+    return True, "Бесплатный доступ активирован."
 
 
 async def apply_plan_purchase(session: AsyncSession, user: User, opt: PlanOption) -> datetime:

@@ -29,6 +29,7 @@ async def run_migrations(engine: AsyncEngine) -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_id INTEGER NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_type VARCHAR(16) NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_label VARCHAR(64) NULL;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_done BOOLEAN NOT NULL DEFAULT FALSE;",
 
 
         # ---- subscriptions ----
@@ -94,6 +95,26 @@ async def run_migrations(engine: AsyncEngine) -> None:
         ");",
         "CREATE INDEX IF NOT EXISTS ix_traffic_snapshots_user_id ON traffic_snapshots (user_id);",
         "CREATE INDEX IF NOT EXISTS ix_traffic_snapshots_collected_at ON traffic_snapshots (collected_at);",
+        "CREATE TABLE IF NOT EXISTS promos ("
+        "id SERIAL PRIMARY KEY, "
+        "code VARCHAR(64) NOT NULL, "
+        "discount_rub INTEGER NOT NULL DEFAULT 0, "
+        "max_uses INTEGER NOT NULL DEFAULT 0, "
+        "used_count INTEGER NOT NULL DEFAULT 0, "
+        "active BOOLEAN NOT NULL DEFAULT TRUE, "
+        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+        ");",
+        "CREATE TABLE IF NOT EXISTS promo_redemptions ("
+        "id SERIAL PRIMARY KEY, "
+        "promo_id INTEGER NOT NULL, "
+        "user_id INTEGER NOT NULL, "
+        "order_id INTEGER NULL, "
+        "redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+        ");",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_promos_code_lower ON promos (lower(code));",
+        "CREATE INDEX IF NOT EXISTS ix_promo_redemptions_promo_id ON promo_redemptions (promo_id);",
+        "CREATE INDEX IF NOT EXISTS ix_promo_redemptions_user_id ON promo_redemptions (user_id);",
+        "CREATE INDEX IF NOT EXISTS ix_promo_redemptions_order_id ON promo_redemptions (order_id);",
     ]
 
     async with engine.begin() as conn:
@@ -198,6 +219,44 @@ BEGIN
       ADD CONSTRAINT traffic_snapshots_user_id_fkey
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE;
+  END IF;
+END $$;
+"""
+            ))
+        except Exception as e:
+            logger.warning(f"FK migration failed: {type(e).__name__}: {e}")
+
+        # promo_redemptions foreign keys
+        try:
+            await conn.execute(text(
+                """
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'promo_redemptions_promo_id_fkey'
+  ) THEN
+    ALTER TABLE promo_redemptions
+      ADD CONSTRAINT promo_redemptions_promo_id_fkey
+      FOREIGN KEY (promo_id) REFERENCES promos(id)
+      ON DELETE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'promo_redemptions_user_id_fkey'
+  ) THEN
+    ALTER TABLE promo_redemptions
+      ADD CONSTRAINT promo_redemptions_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'promo_redemptions_order_id_fkey'
+  ) THEN
+    ALTER TABLE promo_redemptions
+      ADD CONSTRAINT promo_redemptions_order_id_fkey
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+      ON DELETE SET NULL;
   END IF;
 END $$;
 """

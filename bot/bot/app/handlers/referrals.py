@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import session_scope
 from ..services.users import get_user_by_tg_id
 from ..services.referrals import get_referral_stats
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -49,7 +49,7 @@ async def _render(call_or_msg, bot: Bot) -> None:
         user = await get_user_by_tg_id(session, tg_id)
         if not user:
             if isinstance(call_or_msg, CallbackQuery):
-                await call_or_msg.answer("Сначала нажмите /start", show_alert=True)
+                await safe_answer_callback(call_or_msg, "Сначала нажмите /start", show_alert=True)
             else:
                 await call_or_msg.answer("Сначала нажмите /start")
             return

@@ -13,9 +13,9 @@ def main_menu(is_admin: bool, *, has_subscription: bool) -> InlineKeyboardMarkup
 
     if has_subscription:
         rows.append([InlineKeyboardButton(text="⚙️ Управление", callback_data="buy")])
-        rows.append([InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="buy:plans")])
+        rows.append([InlineKeyboardButton(text="💳 Подключить подписку", callback_data="buy:plans")])
     else:
-        rows.append([InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="buy")])
+        rows.append([InlineKeyboardButton(text="💳 Подключить подписку", callback_data="buy")])
 
     rows.append([
         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),

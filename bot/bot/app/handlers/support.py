@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..config import settings
-from ..utils.telegram import edit_message_text, safe_answer
+from ..utils.telegram import edit_message_text, safe_answer_callback
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
 from ..keyboards.support import support_kb
@@ -37,8 +37,8 @@ _TEXT = (
 
 @router.callback_query(F.data == 'support')
 async def cb_support(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     await edit_message_text(call, _TEXT, reply_markup=support_kb())
-    await safe_answer(call)
 
 
 @router.message(Command('support'))
@@ -48,21 +48,23 @@ async def cmd_support(msg: Message) -> None:
 
 @router.callback_query(F.data == 'support:chat')
 async def cb_support_chat(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     url = f'https://t.me/{settings.support_username.lstrip("@")}'
     await edit_message_text(
         call,
         f"Напишите оператору: {settings.support_username}\n\n{url}",
         reply_markup=_kb(),
     )
-    await safe_answer(call)
+
 
 
 @router.callback_query(F.data == 'support:diag')
 async def cb_support_diag(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await get_user_by_tg_id(session, call.from_user.id)
         if not user:
-            await call.answer('Сначала /start', show_alert=True)
+            await safe_answer_callback(call, 'Сначала /start', show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
         devices_active = await count_active_devices(session, user.id)
@@ -77,4 +79,3 @@ async def cb_support_diag(call: CallbackQuery) -> None:
         "Если конфиг не работает — проверьте статус устройства и повторно импортируйте ссылку."
     )
     await edit_message_text(call, text, reply_markup=support_kb())
-    await safe_answer(call)

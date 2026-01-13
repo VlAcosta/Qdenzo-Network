@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..marzban.client import MarzbanClient
 from ..models import Order, User
 from .catalog import get_plan_option
+from .payments.common import load_order_meta
 from .devices import enforce_device_limit, sync_devices_expire
 from .referrals import maybe_grant_referral_bonus
 from .subscriptions import apply_plan_purchase, get_or_create_subscription, is_active, now_utc
@@ -21,25 +22,33 @@ async def create_subscription_order(
     user_id: int,
     plan_code: str,
     months: int,
+    amount_rub: int | None = None,
     payment_method: str = 'manual',
     provider: str | None = None,
     action: str | None = None,
+    meta: dict | None = None,
 ) -> Order:
     opt = get_plan_option(plan_code, months)
+    final_amount = opt.price_rub if amount_rub is None else amount_rub
     order = Order(
         user_id=user_id,
         kind='subscription',
         plan_code=plan_code,
         months=months,
-        amount_rub=opt.price_rub,
+        amount_rub=final_amount,
         currency='RUB',
         payment_method=payment_method,
         provider=provider or payment_method,
         status='pending',
         created_at=now_utc(),
     )
+    if meta:
+        order.meta_json = json.dumps(meta, ensure_ascii=False)
     if action:
-        order.meta_json = json.dumps({"action": action}, ensure_ascii=False)
+        payload = {"action": action}
+        if order.meta_json:
+            payload.update(load_order_meta(order))
+        order.meta_json = json.dumps(payload, ensure_ascii=False)
     session.add(order)
     await session.commit()
     await session.refresh(order)
@@ -103,6 +112,15 @@ async def mark_order_paid(
     bonus_applied = await maybe_grant_referral_bonus(session=session, referral_user_id=user.id, order=order)
     if bonus_applied:
         notes.append(f"ref_bonus={bonus_applied}s")
+
+    # Promo redemption (if any)
+    from .promos import redeem_promo_for_order
+    try:
+        redeemed = await redeem_promo_for_order(session=session, order=order, user_id=user.id)
+    except Exception:
+        redeemed = False
+    if redeemed:
+        notes.append("promo_redeemed")
 
     return new_exp, notes
 

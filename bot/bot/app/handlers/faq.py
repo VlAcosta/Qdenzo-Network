@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from ..keyboards.nav import nav_kb
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 
 router = Router()
 
@@ -40,8 +40,9 @@ def _kb() -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == 'faq')
 async def cb_faq(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     await edit_message_text(call, _FAQ_TEXT, reply_markup=_kb())
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.message(Command('faq'))

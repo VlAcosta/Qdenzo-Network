@@ -170,9 +170,20 @@ class MarzbanClient:
             body["proxies"] = proxies
         if note is not None:
             body["note"] = note
-
-        logger.info(f"Marzban: creating user {username} status={status} expire={expire}")
-        return await self._request("POST", f"{self.api_prefix}/user", json=body)
+        logger.info("Marzban: creating user %s status=%s expire=%s", username, status, expire)
+        try:
+            return await self._request("POST", f"{self.api_prefix}/user", json=body)
+        except MarzbanError as exc:
+            msg = str(exc).lower()
+            if "409" in msg and "exist" in msg:
+                existing = await self.get_user(username)
+                if existing:
+                    try:
+                        await self.update_user(username, expire=body.get("expire"), status=body.get("status"))
+                    except Exception:
+                        pass
+                    return existing
+            raise
 
     async def modify_user(self, username: str, **fields: Any) -> Dict[str, Any]:
         return await self._request("PUT", f"{self.api_prefix}/user/{username}", json=fields)

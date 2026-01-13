@@ -22,6 +22,7 @@ from ..keyboards.admin import (
     admin_plan_apply_kb,
     admin_plan_groups_kb,
     admin_plan_options_kb,
+    admin_promos_kb,
     admin_subs_kb,
     admin_user_actions_kb,
     admin_user_confirm_kb,
@@ -47,9 +48,10 @@ from ..services.payments import (
     is_cryptopay_paid,
     is_yookassa_paid,
 )
+from ..services.promos import create_promo, delete_promo, get_promo_by_code, list_promos, toggle_promo
 from ..services.subscriptions import get_or_create_subscription, is_active, now_utc
 from ..services.traffic import top_users_by_traffic, total_traffic
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -57,6 +59,9 @@ router = Router()
 
 class AdminStates(StatesGroup):
     user_search = State()
+    promo_code = State()
+    promo_discount = State()
+    promo_max_uses = State()
 
 
 def _ensure_admin(tg_id: int) -> bool:
@@ -75,14 +80,14 @@ async def _render_admin_menu(event: CallbackQuery | Message) -> None:
     text = "<b>🛠 Admin</b>\n\nВыберите действие:"
     if isinstance(event, CallbackQuery):
         await edit_message_text(event, text, reply_markup=admin_kb())
-        await event.answer()
+        await safe_answer_callback(event)
     else:
         await event.answer(text, reply_markup=admin_kb())
 
 
 async def _admin_access_denied(event: CallbackQuery | Message) -> None:
     if isinstance(event, CallbackQuery):
-        await event.answer("Нет доступа", show_alert=True)
+        await safe_answer_callback(event, "Нет доступа", show_alert=True)
         return
     await event.answer("Нет доступа")
 
@@ -96,6 +101,26 @@ def _marzban_client() -> MarzbanClient:
         api_prefix=settings.marzban_api_prefix,
     )
 
+async def _render_promos(event: CallbackQuery | Message) -> None:
+    async with session_scope() as session:
+        promos = await list_promos(session)
+    if promos:
+        lines = ["🎟 <b>Промокоды</b>\n"]
+        for promo in promos:
+            status = "активен" if promo.active else "выключен"
+            uses = f"{promo.used_count}/{promo.max_uses or '∞'}"
+            lines.append(
+                f"{h(promo.code)} — скидка {promo.discount_rub} ₽ — {uses} — {status}"
+            )
+        text = "\n".join(lines)
+    else:
+        text = "🎟 <b>Промокоды</b>\n\nПромокодов пока нет."
+    if isinstance(event, CallbackQuery):
+        await edit_message_text(event, text, reply_markup=admin_promos_kb(promos))
+    else:
+        await event.answer(text, reply_markup=admin_promos_kb(promos))
+
+
 
 
 @router.message(Command("admin"))
@@ -108,6 +133,7 @@ async def cmd_admin(message: Message) -> None:
 
 @router.callback_query(F.data.in_({"admin", "admin:menu"}))
 async def cb_admin(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -116,6 +142,7 @@ async def cb_admin(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "admin:dashboard")
 async def cb_admin_dashboard(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -126,7 +153,7 @@ async def cb_admin_dashboard(call: CallbackQuery) -> None:
     except Exception:
         logger.exception("Admin dashboard failed")
         await edit_message_text(call, "⚠️ Не удалось загрузить дашборд.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     plan_lines = [f"• {h(code)} — {count}" for code, count in plans[:5]] or ["—"]
@@ -143,10 +170,120 @@ async def cb_admin_dashboard(call: CallbackQuery) -> None:
         + "\n".join(plan_lines)
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
-    await call.answer()
+
+
+@router.callback_query(F.data == "admin:promos")
+async def cb_admin_promos(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    if not _ensure_admin(call.from_user.id):
+        await _admin_access_denied(call)
+        return
+    await _render_promos(call)
+
+
+@router.callback_query(F.data == "admin:promo:create")
+async def cb_admin_promo_create(call: CallbackQuery, state: FSMContext) -> None:
+    await safe_answer_callback(call)
+    if not _ensure_admin(call.from_user.id):
+        await _admin_access_denied(call)
+        return
+    await state.set_state(AdminStates.promo_code)
+    await edit_message_text(call, "Введите код промокода:", reply_markup=admin_back_kb("admin:promos"))
+
+
+@router.message(AdminStates.promo_code)
+async def msg_admin_promo_code(message: Message, state: FSMContext) -> None:
+    if not _ensure_admin(message.from_user.id):
+        await _admin_access_denied(message)
+        return
+    code = (message.text or "").strip()
+    if not code:
+        await message.answer("Введите код промокода:", reply_markup=admin_back_kb("admin:promos"))
+        return
+    async with session_scope() as session:
+        existing = await get_promo_by_code(session, code)
+        if existing:
+            await message.answer("Такой промокод уже существует. Введите другой.")
+            return
+    await state.update_data(code=code)
+    await state.set_state(AdminStates.promo_discount)
+    await message.answer("Введите скидку в рублях (целое число):")
+
+
+@router.message(AdminStates.promo_discount)
+async def msg_admin_promo_discount(message: Message, state: FSMContext) -> None:
+    if not _ensure_admin(message.from_user.id):
+        await _admin_access_denied(message)
+        return
+    try:
+        discount = int((message.text or "").strip())
+    except ValueError:
+        await message.answer("Введите скидку целым числом.")
+        return
+    if discount < 0:
+        await message.answer("Скидка не может быть отрицательной.")
+        return
+    await state.update_data(discount=discount)
+    await state.set_state(AdminStates.promo_max_uses)
+    await message.answer("Введите максимальное число использований (0 = без лимита):")
+
+
+@router.message(AdminStates.promo_max_uses)
+async def msg_admin_promo_max_uses(message: Message, state: FSMContext) -> None:
+    if not _ensure_admin(message.from_user.id):
+        await _admin_access_denied(message)
+        return
+    try:
+        max_uses = int((message.text or "").strip())
+    except ValueError:
+        await message.answer("Введите число.")
+        return
+    if max_uses < 0:
+        await message.answer("Максимум не может быть отрицательным.")
+        return
+    data = await state.get_data()
+    code = data.get("code")
+    discount = int(data.get("discount") or 0)
+    async with session_scope() as session:
+        existing = await get_promo_by_code(session, code)
+        if existing:
+            await message.answer("Такой промокод уже существует. Начните заново.")
+            await state.clear()
+            return
+        await create_promo(session, code=code, discount_rub=discount, max_uses=max_uses)
+        promos = await list_promos(session)
+    await state.clear()
+    await message.answer("✅ Промокод создан.", reply_markup=admin_promos_kb(promos))
+
+
+@router.callback_query(F.data.startswith("admin:promo:toggle:"))
+async def cb_admin_promo_toggle(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    if not _ensure_admin(call.from_user.id):
+        await _admin_access_denied(call)
+        return
+    promo_id = int(call.data.split(":")[-1])
+    async with session_scope() as session:
+        await toggle_promo(session, promo_id)
+    await _render_promos(call)
+
+
+@router.callback_query(F.data.startswith("admin:promo:delete:"))
+async def cb_admin_promo_delete(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    if not _ensure_admin(call.from_user.id):
+        await _admin_access_denied(call)
+        return
+    promo_id = int(call.data.split(":")[-1])
+    async with session_scope() as session:
+        await delete_promo(session, promo_id)
+    await _render_promos(call)
+
+
 
 @router.callback_query(F.data == "admin:user")
 async def cb_admin_user(call: CallbackQuery, state: FSMContext) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -157,7 +294,7 @@ async def cb_admin_user(call: CallbackQuery, state: FSMContext) -> None:
         "Введите Telegram ID или @username.",
         reply_markup=admin_back_kb(),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.message(AdminStates.user_search)
@@ -210,6 +347,7 @@ async def msg_admin_user_search(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("admin:user:extend:"))
 async def cb_admin_user_extend(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -219,7 +357,7 @@ async def cb_admin_user_extend(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call, "Пользователь не найден", show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
         start_from = sub.expires_at if is_active(sub) and sub.expires_at else now_utc()
@@ -241,11 +379,12 @@ async def cb_admin_user_extend(call: CallbackQuery) -> None:
         finally:
             await marz.close()
 
-    await call.answer(f"✅ Продлено на {days} дн.")
+    await safe_answer_callback(call, f"✅ Продлено на {days} дн.")
 
 
 @router.callback_query(F.data.startswith("admin:user:plan:"))
 async def cb_admin_user_plan(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -259,11 +398,12 @@ async def cb_admin_user_plan(call: CallbackQuery) -> None:
         text,
         reply_markup=admin_plan_groups_kb(user_id, codes, back_cb="admin:user"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:plan_group:"))
 async def cb_admin_plan_group(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -271,7 +411,7 @@ async def cb_admin_plan_group(call: CallbackQuery) -> None:
     user_id = int(user_id_s)
     options = list_plan_options_by_code(code)
     if not options:
-        await call.answer("Тариф не найден", show_alert=True)
+        await safe_answer_callback(call, "Тариф не найден", show_alert=True)
         return
     text = f"Выберите период для тарифа <b>{h(plan_title(code))}</b>:"
     await edit_message_text(
@@ -279,11 +419,12 @@ async def cb_admin_plan_group(call: CallbackQuery) -> None:
         text,
         reply_markup=admin_plan_options_kb(user_id, options, back_cb=f"admin:user:plan:{user_id}"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:plan_option:"))
 async def cb_admin_plan_option(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -305,10 +446,11 @@ async def cb_admin_plan_option(call: CallbackQuery) -> None:
             back_cb=f"admin:plan_group:{user_id}:{plan_code}",
         ),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 @router.callback_query(F.data.startswith("admin:plan_apply:"))
 async def cb_admin_plan_apply(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -319,7 +461,7 @@ async def cb_admin_plan_apply(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call, "Пользователь не найден", show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
         if mode == "now":
@@ -353,7 +495,7 @@ async def cb_admin_plan_apply(call: CallbackQuery) -> None:
         finally:
             await marz.close()
 
-    await call.answer("✅ Тариф обновлён.")
+    await safe_answer_callback(call, "✅ Тариф обновлён.")
 
 
 async def _apply_plan_from_expiry(session, user: User, opt) -> datetime:
@@ -374,7 +516,9 @@ async def _apply_plan_from_expiry(session, user: User, opt) -> datetime:
 
 @router.callback_query(F.data.startswith("admin:user:disable:"))
 async def cb_admin_user_disable(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
+        
         await _admin_access_denied(call)
         return
     user_id = int(call.data.split(":")[-1])
@@ -383,11 +527,12 @@ async def cb_admin_user_disable(call: CallbackQuery) -> None:
         "⏸ Отключить доступ пользователю в Marzban?",
         reply_markup=admin_user_confirm_kb(user_id, action="disable", back_cb="admin:user"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:user:enable:"))
 async def cb_admin_user_enable(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -397,11 +542,12 @@ async def cb_admin_user_enable(call: CallbackQuery) -> None:
         "▶️ Включить доступ пользователю в Marzban?",
         reply_markup=admin_user_confirm_kb(user_id, action="enable", back_cb="admin:user"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:user:disable:confirm:"))
 async def cb_admin_user_disable_confirm(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -409,7 +555,7 @@ async def cb_admin_user_disable_confirm(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call, "Пользователь не найден", show_alert=True)
             return
         devices = await get_user_devices(session, user.id)
         marz = _marzban_client()
@@ -430,11 +576,12 @@ async def cb_admin_user_disable_confirm(call: CallbackQuery) -> None:
         finally:
             await marz.close()
 
-    await call.answer("✅ Доступ отключён.")
+    await safe_answer_callback(call, "✅ Доступ отключён.")
 
 
 @router.callback_query(F.data.startswith("admin:user:enable:confirm:"))
 async def cb_admin_user_enable_confirm(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -442,11 +589,11 @@ async def cb_admin_user_enable_confirm(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call, "Пользователь не найден", show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
         if not is_active(sub):
-            await call.answer("Подписка не активна. Сначала продлите.", show_alert=True)
+            await safe_answer_callback(call, "Подписка не активна. Сначала продлите.", show_alert=True)
             return
         devices = await get_user_devices(session, user.id)
         marz = _marzban_client()
@@ -467,11 +614,12 @@ async def cb_admin_user_enable_confirm(call: CallbackQuery) -> None:
         finally:
             await marz.close()
 
-    await call.answer("✅ Доступ включён.")
+    await safe_answer_callback(call, "✅ Доступ включён.")
 
 
 @router.callback_query(F.data.startswith("admin:payments"))
 async def cb_admin_payments(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -485,7 +633,7 @@ async def cb_admin_payments(call: CallbackQuery) -> None:
     except Exception:
         logger.exception("Admin payments failed")
         await edit_message_text(call, "⚠️ Не удалось загрузить платежи.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     if not orders:
@@ -494,7 +642,7 @@ async def cb_admin_payments(call: CallbackQuery) -> None:
             "💳 <b>Платежи</b>\n\nЗаписей пока нет.",
             reply_markup=admin_back_kb(),
         )
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     lines = ["💳 <b>Платежи</b>\n"]
@@ -505,12 +653,13 @@ async def cb_admin_payments(call: CallbackQuery) -> None:
         )
     text = "\n".join(lines)
     await edit_message_text(call, text, reply_markup=admin_payments_kb(orders))
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 
 @router.callback_query(F.data.regexp(r"^admin:order:\d+$"))
 async def cb_admin_order_detail(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -519,7 +668,7 @@ async def cb_admin_order_detail(call: CallbackQuery) -> None:
     async with session_scope() as session:
         order = await get_order(session, order_id)
     if not order:
-        await call.answer("Заказ не найден", show_alert=True)
+        await safe_answer_callback(call, "Заказ не найден", show_alert=True)
         return
     text = (
         f"🧾 <b>Заказ #{order.id}</b>\n\n"
@@ -542,7 +691,7 @@ async def cb_admin_order_detail(call: CallbackQuery) -> None:
             back_cb="admin:payments",
         ),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:order:check:"))
@@ -554,43 +703,43 @@ async def cb_admin_order_check(call: CallbackQuery) -> None:
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order or order.status != "pending":
-            await call.answer("Заказ не найден или уже обработан", show_alert=True)
+            await safe_answer_callback(call, "Заказ не найден или уже обработан", show_alert=True)
             return
 
 
         if not order.provider_payment_id:
-            await call.answer("Платеж не найден", show_alert=True)
+            await safe_answer_callback(call, "Платеж не найден", show_alert=True)
             return
         if order.provider == "yookassa":
             if not (settings.yookassa_shop_id and settings.yookassa_secret_key):
-                await call.answer("YooKassa не настроена", show_alert=True)
+                await safe_answer_callback(call, "YooKassa не настроена", show_alert=True)
                 return
             client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
             try:
                 payment = await client.get_payment(order.provider_payment_id)
             except Exception:
                 logger.exception("Admin check YooKassa failed for order %s", order_id)
-                await call.answer("Не удалось проверить оплату", show_alert=True)
+                await safe_answer_callback(call, "Не удалось проверить оплату", show_alert=True)
                 return
             if not is_yookassa_paid(payment.status):
-                await call.answer("Оплата еще не подтверждена", show_alert=True)
+                await safe_answer_callback(call, "Оплата еще не подтверждена", show_alert=True)
                 return
         elif order.provider == "cryptopay":
             if not settings.cryptopay_token:
-                await call.answer("CryptoPay не настроен", show_alert=True)
+                await safe_answer_callback(call, "CryptoPay не настроен", show_alert=True)
                 return
             client = CryptoPayClient(settings.cryptopay_token)
             try:
                 invoice = await client.get_invoice(int(order.provider_payment_id))
             except Exception:
                 logger.exception("Admin check CryptoPay failed for order %s", order_id)
-                await call.answer("Не удалось проверить оплату", show_alert=True)
+                await safe_answer_callback(call, "Не удалось проверить оплату", show_alert=True)
                 return
             if not invoice or not is_cryptopay_paid(invoice.status):
-                await call.answer("Оплата еще не подтверждена", show_alert=True)
+                await safe_answer_callback(call, "Оплата еще не подтверждена", show_alert=True)
                 return
         else:
-            await call.answer("Провайдер не поддерживает проверку", show_alert=True)
+            await safe_answer_callback(call, "Провайдер не поддерживает проверку", show_alert=True)
             return
 
         marz = _marzban_client()
@@ -598,16 +747,17 @@ async def cb_admin_order_check(call: CallbackQuery) -> None:
             await mark_order_paid(session=session, marz=marz, order=order)
         except MarzbanError as exc:
             logger.warning("Admin check: Marzban error for order %s: %s", order_id, exc)
-            await call.answer("Оплата подтверждена, но Marzban недоступен.", show_alert=True)
+            await safe_answer_callback(call, "Оплата подтверждена, но Marzban недоступен.", show_alert=True)
             return
         finally:
             await marz.close()
 
-    await call.answer("✅ Оплата подтверждена")
+    await safe_answer_callback(call, "✅ Оплата подтверждена")
 
 
 @router.callback_query(F.data.startswith("admin:order:cancel:"))
 async def cb_admin_order_cancel(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -616,19 +766,20 @@ async def cb_admin_order_cancel(call: CallbackQuery) -> None:
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order:
-            await call.answer("Заказ не найден", show_alert=True)
+            await safe_answer_callback(call, "Заказ не найден", show_alert=True)
             return
         if order.status != "pending":
-            await call.answer("Нельзя отменить", show_alert=True)
+            await safe_answer_callback(call, "Нельзя отменить", show_alert=True)
             return
         order.status = "canceled"
         session.add(order)
         await session.commit()
-    await call.answer("❌ Заказ отменен")
+    await safe_answer_callback(call, "❌ Заказ отменен")
 
 
 @router.callback_query(F.data == "admin:subs")
 async def cb_admin_subs(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -640,7 +791,7 @@ async def cb_admin_subs(call: CallbackQuery) -> None:
     except Exception:
         logger.exception("Admin subscriptions failed")
         await edit_message_text(call, "⚠️ Не удалось загрузить подписки.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     def _render_block(title: str, items: list[tuple[Subscription, User]]) -> list[str]:
@@ -665,11 +816,12 @@ async def cb_admin_subs(call: CallbackQuery) -> None:
     user_ids = list({user.id for _, user in exp_1 + exp_3 + exp_7})[:10]
     reply_markup = admin_subs_kb(user_ids) if user_ids else admin_back_kb()
     await edit_message_text(call, text, reply_markup=reply_markup)
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:subs:msg:"))
 async def cb_admin_subs_msg(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -677,7 +829,7 @@ async def cb_admin_subs_msg(call: CallbackQuery) -> None:
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call,"Пользователь не найден", show_alert=True)
             return
         sub = await get_or_create_subscription(session, user.id)
     text = (
@@ -689,9 +841,9 @@ async def cb_admin_subs_msg(call: CallbackQuery) -> None:
     try:
         await call.bot.send_message(user.tg_id, text)
     except Exception:
-        await call.answer("Не удалось отправить сообщение", show_alert=True)
+        await safe_answer_callback(call,"Не удалось отправить сообщение", show_alert=True)
         return
-    await call.answer("✅ Сообщение отправлено")
+    await safe_answer_callback(call,"✅ Сообщение отправлено")
 
 
 @router.callback_query(F.data.startswith("admin:subs_extend:"))
@@ -702,7 +854,7 @@ async def cb_admin_subs_extend(call: CallbackQuery) -> None:
     parts = call.data.rsplit(":", 2)
     if len(parts) != 3:
         logger.warning("Admin subs_extend malformed callback: %s", call.data)
-        await call.answer("Неверные данные кнопки. Обновите меню.", show_alert=True)
+        await safe_answer_callback(call,"Неверные данные кнопки. Обновите меню.", show_alert=True)
         return
     user_id_s, days_s = parts[-2], parts[-1]
     try:
@@ -710,12 +862,12 @@ async def cb_admin_subs_extend(call: CallbackQuery) -> None:
         days = int(days_s)
     except ValueError:
         logger.warning("Admin subs_extend invalid data: %s", call.data)
-        await call.answer("Неверные данные кнопки. Обновите меню.", show_alert=True)
+        await safe_answer_callback(call,"Неверные данные кнопки. Обновите меню.", show_alert=True)
         return
     async with session_scope() as session:
         user = await session.get(User, user_id)
         if not user:
-            await call.answer("Пользователь не найден", show_alert=True)
+            await safe_answer_callback(call,"Пользователь не найден", show_alert=True)
             return
         
         sub = await get_or_create_subscription(session, user.id)
@@ -736,7 +888,7 @@ async def cb_admin_subs_extend(call: CallbackQuery) -> None:
             logger.warning("Admin subs extend: Marzban error for user %s: %s", user.tg_id, exc)
         finally:
             await marz.close()
-    await call.answer(f"✅ Продлено на {days} дн.")
+    await safe_answer_callback(call,f"✅ Продлено на {days} дн.")
 
 
 @router.callback_query(F.data == "admin:traffic")
@@ -752,7 +904,7 @@ async def cb_admin_traffic(call: CallbackQuery) -> None:
             "TRAFFIC_COLLECT_INTERVAL_SECONDS."
         )
         await edit_message_text(call, text, reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     try:
@@ -764,7 +916,7 @@ async def cb_admin_traffic(call: CallbackQuery) -> None:
     except Exception:
         logger.exception("Admin traffic failed")
         await edit_message_text(call, "⚠️ Не удалось загрузить трафик.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     top_lines = [f"• {user_id}: {bytes_used} B" for user_id, bytes_used in top_7d] or ["—"]
@@ -777,11 +929,12 @@ async def cb_admin_traffic(call: CallbackQuery) -> None:
         + "\n".join(top_lines)
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == "admin:quality")
 async def cb_admin_quality(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -833,11 +986,12 @@ async def cb_admin_quality(call: CallbackQuery) -> None:
         f"YooKassa: <b>{h(yk_status)}</b>\n"
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == "admin:settings")
 async def cb_admin_settings(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -855,11 +1009,12 @@ async def cb_admin_settings(call: CallbackQuery) -> None:
         f"CRYPTOPAY_TOKEN: {_mask_secret(settings.cryptopay_token)}\n"
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == "admin:pending")
 async def cb_admin_pending(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -869,13 +1024,13 @@ async def cb_admin_pending(call: CallbackQuery) -> None:
     except Exception:
         logger.exception("Admin pending failed")
         await edit_message_text(call, "⚠️ Не удалось загрузить список.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
 
     if not orders:
         await edit_message_text(call, "✅ Нет ожидающих оплат.", reply_markup=admin_back_kb())
-        await call.answer()
+        await safe_answer_callback(call)
         return
 
     lines = ["🧾 <b>Ожидают оплаты</b>\n"]
@@ -884,11 +1039,12 @@ async def cb_admin_pending(call: CallbackQuery) -> None:
             f"• #{o.id} — {h(o.plan_code)} {o.months}м — {o.amount_rub}₽ — {h(o.provider)} — {fmt_dt(o.created_at)}"
         )
     await edit_message_text(call, "\n".join(lines), reply_markup=admin_pending_list_kb(orders))
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("admin:pending:check:"))
 async def cb_admin_pending_check(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -897,35 +1053,35 @@ async def cb_admin_pending_check(call: CallbackQuery) -> None:
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order:
-            await call.answer("Заказ не найден", show_alert=True)
+            await safe_answer_callback(call, "Заказ не найден", show_alert=True)
             return
         if order.provider not in {"yookassa", "cryptopay"}:
-            await call.answer("Провайдер не поддерживает проверку", show_alert=True)
+            await safe_answer_callback(call,"Провайдер не поддерживает проверку", show_alert=True)
             return
         if order.status != "pending":
-            await call.answer("Заказ уже обработан", show_alert=True)
+            await safe_answer_callback(call,"Заказ уже обработан", show_alert=True)
             return
 
         if not order.provider_payment_id:
-            await call.answer("Платеж не найден", show_alert=True)
+            await safe_answer_callback(call,"Платеж не найден", show_alert=True)
             return
         if order.provider == "yookassa":
             if not (settings.yookassa_shop_id and settings.yookassa_secret_key):
-                await call.answer("YooKassa не настроена", show_alert=True)
+                await safe_answer_callback(call,"YooKassa не настроена", show_alert=True)
                 return
             client = YooKassaClient(settings.yookassa_shop_id, settings.yookassa_secret_key)
             payment = await client.get_payment(order.provider_payment_id)
             if not is_yookassa_paid(payment.status):
-                await call.answer("Оплата еще не подтверждена", show_alert=True)
+                await safe_answer_callback(call,"Оплата еще не подтверждена", show_alert=True)
                 return
         else:
             if not settings.cryptopay_token:
-                await call.answer("CryptoPay не настроен", show_alert=True)
+                await safe_answer_callback(call,"CryptoPay не настроен", show_alert=True)
                 return
             client = CryptoPayClient(settings.cryptopay_token)
             invoice = await client.get_invoice(int(order.provider_payment_id))
             if not invoice or not is_cryptopay_paid(invoice.status):
-                await call.answer("Оплата еще не подтверждена", show_alert=True)
+                await safe_answer_callback(call,"Оплата еще не подтверждена", show_alert=True)
                 return
 
         marz = _marzban_client()
@@ -933,16 +1089,17 @@ async def cb_admin_pending_check(call: CallbackQuery) -> None:
             await mark_order_paid(session=session, marz=marz, order=order)
         except MarzbanError as exc:
             logger.warning("Admin pending check: Marzban error for order %s: %s", order_id, exc)
-            await call.answer("Оплата подтверждена, но Marzban недоступен.", show_alert=True)
+            await safe_answer_callback(call,"Оплата подтверждена, но Marzban недоступен.", show_alert=True)
             return
         finally:
             await marz.close()
 
-    await call.answer("✅ Оплата подтверждена")
+    await safe_answer_callback(call,"✅ Оплата подтверждена")
 
 
 @router.callback_query(F.data.startswith("admin:pending:cancel:"))
 async def cb_admin_pending_cancel(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     if not _ensure_admin(call.from_user.id):
         await _admin_access_denied(call)
         return
@@ -950,12 +1107,12 @@ async def cb_admin_pending_cancel(call: CallbackQuery) -> None:
     async with session_scope() as session:
         order = await get_order(session, order_id)
         if not order:
-            await call.answer("Заказ не найден", show_alert=True)
+            await safe_answer_callback(call, "Заказ не найден", show_alert=True)
             return
         if order.status != "pending":
-            await call.answer("Заказ уже обработан", show_alert=True)
+            await safe_answer_callback(call,"Заказ уже обработан", show_alert=True)
             return
         order.status = "canceled"
         session.add(order)
         await session.commit()
-    await call.answer("❌ Заказ отменён")
+    await safe_answer_callback(call,"❌ Заказ отменён")

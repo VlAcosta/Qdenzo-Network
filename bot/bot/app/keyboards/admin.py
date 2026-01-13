@@ -14,12 +14,27 @@ def admin_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text='🔎 Пользователь', callback_data='admin:user')],
         [InlineKeyboardButton(text='💳 Платежи', callback_data='admin:payments')],
         [InlineKeyboardButton(text='📦 Подписки', callback_data='admin:subs')],
+        [InlineKeyboardButton(text='🎟 Промокоды', callback_data='admin:promos')],
         [InlineKeyboardButton(text='📈 Трафик', callback_data='admin:traffic')],
         [InlineKeyboardButton(text='🧪 Качество', callback_data='admin:quality')],
         [InlineKeyboardButton(text='⚙️ Настройки', callback_data='admin:settings')],
         [InlineKeyboardButton(text='🧾 Ожидают оплаты', callback_data='admin:pending')],
         [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin:menu')],
     ])
+
+
+def admin_promos_kb(promos: list, *, back_cb: str = "admin:menu") -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for promo in promos:
+        status = "🟢" if promo.active else "🔴"
+        rows.append([
+            InlineKeyboardButton(text=f"{status} {promo.code}", callback_data=f"admin:promo:toggle:{promo.id}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"admin:promo:delete:{promo.id}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin:promo:create")])
+    rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=back_cb)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 def admin_back_kb(target: str = "admin:menu") -> InlineKeyboardMarkup:

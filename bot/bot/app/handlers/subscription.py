@@ -19,7 +19,7 @@ from ..services import get_or_create_subscription
 from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
 from ..services.devices import count_active_devices
 from ..services.users import ensure_user
-from ..utils.telegram import edit_message_text
+from ..utils.telegram import edit_message_text, safe_answer_callback
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -42,6 +42,7 @@ def _remaining(expires_at: datetime | None) -> str:
 
 @router.message(Command('sub'))
 async def cmd_sub(message: Message) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
@@ -65,6 +66,7 @@ async def cmd_sub(message: Message) -> None:
 
 @router.callback_query(F.data == 'sub')
 async def cb_sub(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
@@ -84,11 +86,12 @@ async def cb_sub(call: CallbackQuery) -> None:
         "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
     )
     await edit_message_text(call, text, reply_markup=subscription_kb())
-    await call.answer()
+    await safe_answer_callback(call)
     
 
 @router.callback_query(F.data == 'sub:renew')
 async def cb_sub_renew(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
@@ -105,11 +108,12 @@ async def cb_sub_renew(call: CallbackQuery) -> None:
         text,
         reply_markup=plan_options_kb(options, back_cb="sub", callback_prefix="plan:renew"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == 'sub:change')
 async def cb_sub_change(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=call.from_user)
         sub = await get_or_create_subscription(session, user.id)
@@ -131,11 +135,12 @@ async def cb_sub_change(call: CallbackQuery) -> None:
             exclude_codes={sub.plan_code},
         ),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data.startswith("plan_group:change:"))
 async def cb_sub_change_group(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     parts = call.data.split(":")
     if len(parts) != 3:
         return
@@ -145,12 +150,12 @@ async def cb_sub_change_group(call: CallbackQuery) -> None:
         sub = await get_or_create_subscription(session, user.id)
 
     if code == sub.plan_code:
-        await call.answer("Этот тариф уже активен", show_alert=True)
+        await safe_answer_callback(call, "Этот тариф уже активен", show_alert=True)
         return
 
     options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
     if not options:
-        await call.answer("Тариф не найден", show_alert=True)
+        await safe_answer_callback(call, "Тариф не найден", show_alert=True)
         return
 
     text = (
@@ -164,10 +169,11 @@ async def cb_sub_change_group(call: CallbackQuery) -> None:
         text,
         reply_markup=plan_options_kb(options, back_cb="sub:change", callback_prefix="plan:change"),
     )
-    await call.answer()
+    await safe_answer_callback(call)
 
 @router.callback_query(F.data == 'sub:history')
 async def cb_sub_history(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=call.from_user)
         q = await session.execute(
@@ -190,7 +196,7 @@ async def cb_sub_history(call: CallbackQuery) -> None:
         text = "\n".join(lines)
 
     await edit_message_text(call, text, reply_markup=nav_kb(back_cb='sub', home_cb='back'))
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 def _profiles_for_plan(plan_code: str) -> str:

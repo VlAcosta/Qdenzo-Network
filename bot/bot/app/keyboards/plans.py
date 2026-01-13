@@ -30,7 +30,7 @@ def plan_groups_kb(
     if include_trial:
         rows.append([
             InlineKeyboardButton(
-                text=f"🎁 Trial — {TRIAL_HOURS}ч — бесплатно",
+                text="🎁 Попробовать бесплатно (48 часов)",
                 callback_data="plan:trial:0",
             )
         ])
@@ -53,11 +53,16 @@ def plan_options_kb(
     *,
     back_cb: str,
     callback_prefix: str = "plan",
+    promo_discount_rub: int = 0,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for opt in options:
         if opt.code == 'trial':
-            title = f"🎁 Trial — {TRIAL_HOURS}ч — бесплатно"
+            final_price = max(0, opt.price_rub - promo_discount_rub) if promo_discount_rub else opt.price_rub
+            if promo_discount_rub and final_price != opt.price_rub:
+                title = f"{opt.name} — {opt.months} мес — {opt.price_rub}₽ → {final_price}₽"
+            else:
+                title = f"{opt.name} — {opt.months} мес — {opt.price_rub}₽"
         else:
             title = f"{opt.name} — {opt.months} мес — {opt.price_rub}₽"
         rows.append([InlineKeyboardButton(text=title, callback_data=f"{callback_prefix}:{opt.code}:{opt.months}")])
