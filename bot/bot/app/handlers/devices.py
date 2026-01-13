@@ -37,7 +37,7 @@ from ..services.users import ensure_user
 from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
 from ..services.happ_connect import build_happ_links
 from ..utils.text import h
-from ..utils.telegram import edit_message_text, safe_answer_callback
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 
 router = Router()
 
@@ -57,8 +57,7 @@ def _connect_instruction_text() -> str:
     )
 
 
-async def _happ_proxy_cfg() -> HappProxyConfig | None:
-    await safe_answer_callback(call)
+def _happ_proxy_cfg() -> HappProxyConfig | None:
     if not (settings.happ_proxy_api_base and settings.happ_proxy_provider_code and settings.happ_proxy_auth_key):
         return None
     return HappProxyConfig(
@@ -85,8 +84,7 @@ async def _resolve_device_urls(device) -> tuple[str | None, str | None]:
     return link, subscription_url
 
 
-async def _pick_connection_url(link: str | None, subscription_url: str | None) -> str | None:
-    await safe_answer_callback(call)
+def _pick_connection_url(link: str | None, subscription_url: str | None) -> str | None:
     if settings.marzban_link_mode == "link":
         return link
     if settings.marzban_link_mode == "subscription":
@@ -97,7 +95,6 @@ async def _pick_connection_url(link: str | None, subscription_url: str | None) -
 
 
 async def _ensure_install_code(session, device, *, install_limit: int) -> str | None:
-    await safe_answer_callback(call)
     cfg = _happ_proxy_cfg()
     if not cfg:
         return None
@@ -179,20 +176,29 @@ def _connect_kb(
 
 
 async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
-    await safe_answer_callback(call)
+    if isinstance(call_or_message, CallbackQuery):
+        await safe_answer_callback(call_or_message)
     async with session_scope() as session:
         device = await get_device(session, device_id)
         if not device:
             if isinstance(call_or_message, CallbackQuery):
-                await safe_answer_callback(call_or_message,"Устройство не найдено", show_alert=True)
+                await safe_answer_callback(call_or_message, "Устройство не найдено", show_alert=True)
             else:
-                await safe_answer_callback(call_or_message,"Устройство не найдено")
+                await send_html_with_photo(
+                    call_or_message,
+                    "Устройство не найдено",
+                    photo_path=settings.start_photo_path,
+                )
             return
         if hasattr(call_or_message, "from_user") and device.user.tg_id != call_or_message.from_user.id:
             if isinstance(call_or_message, CallbackQuery):
-                await safe_answer_callback(call_or_message,"Устройство не найдено", show_alert=True)
+                await safe_answer_callback(call_or_message, "Устройство не найдено", show_alert=True)
             else:
-                await safe_answer_callback(call_or_message,"Устройство не найдено")
+                await send_html_with_photo(
+                    call_or_message,
+                    "Устройство не найдено",
+                    photo_path=settings.start_photo_path,
+                )
             return
         sub = await get_or_create_subscription(session, device.user_id)
         limited_url, crypt_url = await _build_connect_links(
@@ -211,7 +217,12 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
             await edit_message_text(call_or_message, text, reply_markup=kb)
             await safe_answer_callback(call_or_message)
         else:
-            await safe_answer_callback(call_or_message,text, reply_markup=kb)
+            await send_html_with_photo(
+                call_or_message,
+                text,
+                reply_markup=kb,
+                photo_path=settings.start_photo_path,
+            )
         return
 
     text = (
@@ -219,21 +230,26 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
         "Выберите способ подключения 👇"
     )
     if crypt_url is None:
-        await safe_answer_callback(call)
         text += "\n\n⚠️ Шифрованный импорт временно недоступен — используйте обычную ссылку."
     kb = _connect_kb(device_id=device_id, plain_url=limited_url, crypt_url=crypt_url)
     if isinstance(call_or_message, CallbackQuery):
         await edit_message_text(call_or_message, text, reply_markup=kb)
         await safe_answer_callback(call_or_message,)
     else:
-        await safe_answer_callback(call_or_message,text, reply_markup=kb)
+        await send_html_with_photo(
+            call_or_message,
+            text,
+            reply_markup=kb,
+            photo_path=settings.start_photo_path,
+        )
 
 def _type_title(device_type: str) -> str:
     return DEVICE_TYPES.get(device_type, device_type)
 
 
 async def _show_devices(call_or_message, *, user_id: int) -> None:
-    await safe_answer_callback(call)
+    if isinstance(call_or_message, CallbackQuery):
+        await safe_answer_callback(call_or_message)
     async with session_scope() as session:
         sub = await get_or_create_subscription(session, user_id)
         devices = await list_devices(session, user_id)
@@ -250,12 +266,16 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
         await edit_message_text(call_or_message, text, reply_markup=kb)
         await safe_answer_callback(call_or_message,)
     else:
-        await safe_answer_callback(call_or_message,text, reply_markup=kb)
+        await send_html_with_photo(
+            call_or_message,
+            text,
+            reply_markup=kb,
+            photo_path=settings.start_photo_path,
+        )
 
 
 @router.message(Command("devices"))
 async def cmd_devices(message: Message) -> None:
-    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=message.from_user)
     await _show_devices(message, user_id=user.id)
@@ -276,7 +296,7 @@ async def cb_device_view(call: CallbackQuery) -> None:
     async with session_scope() as session:
         device = await get_device(session, device_id)
         if not device or device.user.tg_id != call.from_user.id:
-            await call.answer("Устройство не найдено", show_alert=True)
+            await safe_answer_callback(call, "Устройство не найдено", show_alert=True)
             return
 
     status = "✅ активно" if device.status == "active" else ("❄️ заморожено" if device.status == "disabled" else "🗑 удалено")
@@ -288,7 +308,7 @@ async def cb_device_view(call: CallbackQuery) -> None:
         "Действия ниже:"
     )
     await edit_message_text(call, text, reply_markup=device_menu_kb(device.id, is_active=device.status == "active"))
-    await call.answer()
+    await safe_answer_callback(call)
 
 
 @router.callback_query(F.data == "dev:add")
@@ -429,7 +449,6 @@ async def cb_rename_device(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(DeviceStates.renaming_device)
 async def msg_rename_device(message: Message, state: FSMContext) -> None:
-    await safe_answer_callback(call)
     new_name = (message.text or "").strip()
     if not new_name:
         await message.answer("Отправьте текст с названием.")

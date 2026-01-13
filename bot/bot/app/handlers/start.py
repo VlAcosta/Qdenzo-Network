@@ -13,7 +13,7 @@ from ..services.subscriptions import is_active
 from ..services import get_or_create_subscription
 from ..services.users import ensure_user
 from ..utils.text import h
-from ..utils.telegram import edit_message_text, safe_answer_callback, send_html
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html, send_html_with_photo
 
 router = Router()
 
@@ -102,10 +102,11 @@ async def cmd_menu(message: Message) -> None:
         user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
 
-    await send_html(
+    await send_html_with_photo(
         message,
         _main_menu_text(user),
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
+        photo_path=settings.start_photo_path,
     )
 
 

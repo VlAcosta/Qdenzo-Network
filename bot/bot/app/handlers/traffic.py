@@ -14,7 +14,7 @@ from ..marzban.client import MarzbanClient
 from ..services.devices import DEVICE_TYPES, list_devices
 from ..services.subscriptions import get_or_create_subscription
 from ..services.users import get_user_by_tg_id
-from ..utils.telegram import edit_message_text, safe_answer_callback
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 
 router = Router()
 
@@ -82,7 +82,12 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
         await edit_message_text(call_or_msg, text, reply_markup=nav_kb(back_cb='buy', home_cb='back'))
         await call_or_msg.answer()
     else:
-        await call_or_msg.answer(text, reply_markup=traffic_kb())
+        await send_html_with_photo(
+            call_or_msg,
+            text,
+            reply_markup=traffic_kb(),
+            photo_path=settings.start_photo_path,
+        )
 
 
 @router.callback_query(F.data == 'traffic:buy')

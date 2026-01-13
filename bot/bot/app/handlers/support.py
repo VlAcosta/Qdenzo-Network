@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..config import settings
-from ..utils.telegram import edit_message_text, safe_answer_callback
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
 from ..keyboards.support import support_kb
@@ -43,8 +43,12 @@ async def cb_support(call: CallbackQuery) -> None:
 
 @router.message(Command('support'))
 async def cmd_support(msg: Message) -> None:
-    await msg.answer(_TEXT, reply_markup=support_kb())
-
+    await send_html_with_photo(
+        msg,
+        _TEXT,
+        reply_markup=support_kb(),
+        photo_path=settings.start_photo_path,
+    )
 
 @router.callback_query(F.data == 'support:chat')
 async def cb_support_chat(call: CallbackQuery) -> None:

@@ -4,6 +4,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from ..config import settings
 from ..db import session_scope
 from ..keyboards.nav import nav_kb
 from ..keyboards.profiles import (
@@ -17,7 +18,7 @@ from ..services.devices import get_device, list_devices, set_device_profile, typ
 from ..services.users import get_user_by_tg_id
 from ..services.profiles import get_profile_code, set_profile_code
 from ..services.subscriptions import get_or_create_subscription, is_active
-from ..utils.telegram import edit_message_text, safe_answer_callback
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 from ..utils.text import h
 
 router = Router()
@@ -36,14 +37,11 @@ def _allowed_profiles(plan_code: str) -> set[str]:
 @router.callback_query(F.data.in_({"profiles", "modes"}))
 @router.message(Command("profiles"))
 async def show_profiles(event) -> None:
-    await safe_answer_callback(call)
     if isinstance(event, Message):
         tg_id = event.from_user.id
-        answer = event.answer
         is_cb = False
     else:
         tg_id = event.from_user.id
-        answer = edit_message_text
         is_cb = True
 
     async with session_scope() as session:
@@ -62,7 +60,15 @@ async def show_profiles(event) -> None:
             "⛔️ <b>Режимы доступны только при активной подписке.</b>\n\n"
             "Оформите тариф в разделе <b>Купить</b> / <b>Управление</b>."
         )
-        await answer(event, text, reply_markup=nav_kb(back_cb="buy", home_cb="back"))
+        if is_cb:
+            await edit_message_text(event, text, reply_markup=nav_kb(back_cb="buy", home_cb="back"))
+        else:
+            await send_html_with_photo(
+                event,
+                text,
+                reply_markup=nav_kb(back_cb="buy", home_cb="back"),
+                photo_path=settings.start_photo_path,
+            )
         if is_cb:
             await event.answer()
         return
@@ -72,7 +78,15 @@ async def show_profiles(event) -> None:
         "🧠 <b>Режимы — профили использования</b>\n\n"
         "Выберите, куда применить режим:"
     )
-    await answer(event, text, reply_markup=modes_root_kb())
+    if is_cb:
+        await edit_message_text(event, text, reply_markup=modes_root_kb())
+    else:
+        await send_html_with_photo(
+            event,
+            text,
+            reply_markup=modes_root_kb(),
+            photo_path=settings.start_photo_path,
+        )
     if is_cb:
         await event.answer()
 

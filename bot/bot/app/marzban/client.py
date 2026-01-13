@@ -176,13 +176,22 @@ class MarzbanClient:
         except MarzbanError as exc:
             msg = str(exc).lower()
             if "409" in msg and "exist" in msg:
-                existing = await self.get_user(username)
+                try:
+                    existing = await self.get_user(username)
+                except MarzbanError as get_exc:
+                    logger.warning(
+                        "Marzban: failed to fetch existing user %s after conflict: %s",
+                        username,
+                        get_exc,
+                    )
+                    existing = None
                 if existing:
                     try:
                         await self.update_user(username, expire=body.get("expire"), status=body.get("status"))
                     except Exception:
                         pass
                     return existing
+                return {"username": username}
             raise
 
     async def modify_user(self, username: str, **fields: Any) -> Dict[str, Any]:

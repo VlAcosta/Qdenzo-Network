@@ -37,7 +37,7 @@ from ..services.promos import promo_available_for_user
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import ensure_user
 from ..utils.text import fmt_dt, h
-from ..utils.telegram import edit_message_text, safe_answer_callback, send_html
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html, send_html_with_photo
 
 router = Router()
 
@@ -47,7 +47,6 @@ class BuyStates(StatesGroup):
 
 @router.message(BuyStates.promo_input)
 async def msg_promo_input(message: Message, state: FSMContext) -> None:
-    await safe_answer_callback(call)
     code = (message.text or "").strip()
     if not code:
         await send_html(message, "Введите промокод:")
@@ -208,7 +207,7 @@ def _periods_text(code: str, discount_rub: int) -> str:
 
 
 async def _notify_admins(bot: Bot, text: str, reply_markup=None) -> None:
-    await safe_answer_callback(call)
+
     for admin_id in settings.admin_id_list:
         try:
             await bot.send_message(admin_id, text, reply_markup=reply_markup)
@@ -228,8 +227,12 @@ async def _get_order_for_user(session, order_id: int, user: User) -> Order | Non
 
 @router.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
-    await safe_answer_callback(call)
-    await send_html(message, _plans_menu_text(), reply_markup=subscription_plans_kb())
+    await send_html_with_photo(
+        message,
+        _plans_menu_text(),
+        reply_markup=subscription_plans_kb(),
+        photo_path=settings.start_photo_path,
+    )
 
 @router.callback_query(F.data == "buy")
 async def cb_buy(call: CallbackQuery) -> None:
@@ -247,11 +250,12 @@ async def cb_buy(call: CallbackQuery) -> None:
         traffic_limit = _traffic_limit_gb(sub.plan_code)
         await edit_message_text(
             call,
-            "⚙️ <b>Управление</b> "
-            f"(ID: <code>{user.tg_id}</code>, Баланс: <b>—</b>, "
-            f"Дата окончания подписки: <b>{fmt_dt(sub.expires_at)}</b>, "
-            f"Трафик: <b>0/{traffic_limit} GB</b>, "
-            f"Активных устройств: <b>{devices_active}</b>)\n\n"
+            "⚙️ <b>Управление</b>\n\n"
+            f"<b>ID:</b> <code>{user.tg_id}</code>\n"
+            "<b>Баланс:</b> —\n"
+            f"<b>Дата окончания подписки:</b> {fmt_dt(sub.expires_at)}\n"
+            f"<b>Трафик:</b> 0/{traffic_limit} GB\n"
+            f"<b>Активных устройств:</b> {devices_active}\n\n"
             "Выберите действие 👇",
             reply_markup=buy_manage_kb(),
         )

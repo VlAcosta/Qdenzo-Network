@@ -6,9 +6,9 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
+from ..config import settings
 from ..keyboards.nav import nav_kb
-from ..utils.telegram import edit_message_text, safe_answer_callback
-
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 router = Router()
 
 
@@ -47,4 +47,9 @@ async def cb_faq(call: CallbackQuery) -> None:
 
 @router.message(Command('faq'))
 async def cmd_faq(msg: Message) -> None:
-    await msg.answer(_FAQ_TEXT, reply_markup=_kb())
+    await send_html_with_photo(
+        msg,
+        _FAQ_TEXT,
+        reply_markup=_kb(),
+        photo_path=settings.start_photo_path,
+    )

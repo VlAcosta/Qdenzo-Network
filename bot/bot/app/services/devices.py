@@ -225,7 +225,12 @@ async def enforce_device_limit(
 
 async def get_device_connection_links(marz: MarzbanClient, marzban_username: str) -> tuple[str | None, str | None]:
     """Return (link, subscription_url)."""
-    u = await marz.get_user(marzban_username)
+    try:
+        u = await marz.get_user(marzban_username)
+    except MarzbanError:
+        return None, None
+    if not u:
+        return None, None
     links = u.get('links') or []
     sub_url = u.get('subscription_url')
     link = links[0] if links else None

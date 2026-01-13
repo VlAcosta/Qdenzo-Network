@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Subscription, User
@@ -36,7 +37,14 @@ async def get_or_create_subscription(session: AsyncSession, user_id: int) -> Sub
         expires_at=None,
     )
     session.add(sub)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        sub = await get_subscription(session, user_id)
+        if sub:
+            return sub
+        raise
     await session.refresh(sub)
     return sub
 

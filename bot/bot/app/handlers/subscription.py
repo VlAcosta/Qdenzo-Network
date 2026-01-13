@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ..config import settings
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -19,7 +20,7 @@ from ..services import get_or_create_subscription
 from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
 from ..services.devices import count_active_devices
 from ..services.users import ensure_user
-from ..utils.telegram import edit_message_text, safe_answer_callback
+from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 from ..utils.text import fmt_dt, h
 
 router = Router()
@@ -42,7 +43,6 @@ def _remaining(expires_at: datetime | None) -> str:
 
 @router.message(Command('sub'))
 async def cmd_sub(message: Message) -> None:
-    await safe_answer_callback(call)
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=message.from_user)
         sub = await get_or_create_subscription(session, user.id)
@@ -61,7 +61,12 @@ async def cmd_sub(message: Message) -> None:
         "Pro — 5 устройств (макс: 1 ПК, 2 ТВ, 3 телефон/планшет)\n"
         "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
     )
-    await message.answer(text, reply_markup=subscription_kb())
+    await send_html_with_photo(
+        message,
+        text,
+        reply_markup=subscription_kb(),
+        photo_path=settings.start_photo_path,
+    )
 
 
 @router.callback_query(F.data == 'sub')

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from aiogram.exceptions import TelegramBadRequest
 
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 def _markup_payload(markup: Any | None) -> dict | None:
     if not markup:
@@ -88,3 +88,25 @@ async def send_html(message_or_call: Message | CallbackQuery, text: str, reply_m
         await message_or_call.message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
     else:
         await message_or_call.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+
+
+async def send_html_with_photo(
+    message: Message,
+    text: str,
+    reply_markup: Any = None,
+    photo_path: "Path | None" = None,
+) -> None:
+    """Send a photo with HTML caption fallbacking to a plain HTML message."""
+    if photo_path:
+        try:
+            photo = FSInputFile(str(photo_path))
+            await message.answer_photo(
+                photo=photo,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            pass
+    await send_html(message, text, reply_markup=reply_markup)
