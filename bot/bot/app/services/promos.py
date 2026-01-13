@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Promo, PromoRedemption
+from ..models import Promo, PromoRedemption, User
 from .payments.common import load_order_meta
 
 
@@ -118,3 +118,18 @@ async def redeem_promo_for_order(session: AsyncSession, *, order, user_id: int) 
     session.add_all([promo, redemption])
     await session.commit()
     return True
+
+
+async def redeem_promo_to_balance(session: AsyncSession, *, promo: Promo, user: User) -> int:
+    redemption = PromoRedemption(
+        promo_id=promo.id,
+        user_id=user.id,
+        order_id=None,
+        redeemed_at=datetime.now(timezone.utc),
+    )
+    promo.used_count = (promo.used_count or 0) + 1
+    user.balance_rub = (user.balance_rub or 0) + promo.discount_rub
+    session.add_all([promo, redemption, user])
+    await session.commit()
+    await session.refresh(user)
+    return user.balance_rub

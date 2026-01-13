@@ -32,7 +32,7 @@ def _main_menu_text(user) -> str:
     return (
         "<b>Главное меню</b>\n\n"
         f"ID: <code>{user.tg_id}</code>\n"
-        "Баланс: — ₽\n\n"
+        f"Баланс: <b>{user.balance_rub} ₽</b>\n\n"
         "Выберите действие ниже 👇"
     )
 

@@ -33,7 +33,7 @@ from ..keyboards.orders import order_canceled_kb, order_payment_kb
 from ..keyboards.plans import plan_options_kb, plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
 from ..services.devices import count_active_devices
-from ..services.promos import promo_available_for_user
+from ..services.promos import promo_available_for_user, redeem_promo_to_balance
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import ensure_user
 from ..utils.text import fmt_dt, h
@@ -58,20 +58,17 @@ async def msg_promo_input(message: Message, state: FSMContext) -> None:
             await send_html(message, "Промокод не найден или больше недоступен.")
             await state.clear()
             return
-        await state.update_data(
-            promo_id=promo.id,
-            promo_code=promo.code,
-            promo_discount_rub=promo.discount_rub,
-        )
+        balance = await redeem_promo_to_balance(session, promo=promo, user=user)
 
     await send_html(
         message,
-        f"<b>Промокод применён:</b> {h(promo.code)}\n"
-        f"<b>Скидка:</b> {promo.discount_rub} ₽\n\n"
-        "Теперь выберите тариф.",
+        f"✅ <b>Промокод применён:</b> {h(promo.code)}\n"
+        f"💰 <b>Зачислено на баланс:</b> {promo.discount_rub} ₽\n"
+        f"Баланс: <b>{balance} ₽</b>\n\n"
+        "Теперь выберите тариф 👇",
         reply_markup=subscription_plans_kb(),
     )
-
+    await state.clear()
 
 
 
@@ -252,7 +249,7 @@ async def cb_buy(call: CallbackQuery) -> None:
             call,
             "⚙️ <b>Управление</b>\n\n"
             f"<b>ID:</b> <code>{user.tg_id}</code>\n"
-            "<b>Баланс:</b> —\n"
+            f"<b>Баланс:</b> {user.balance_rub} ₽\n"
             f"<b>Дата окончания подписки:</b> {fmt_dt(sub.expires_at)}\n"
             f"<b>Трафик:</b> 0/{traffic_limit} GB\n"
             f"<b>Активных устройств:</b> {devices_active}\n\n"
