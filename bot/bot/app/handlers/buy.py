@@ -67,8 +67,8 @@ async def msg_promo_input(message: Message, state: FSMContext) -> None:
 
     await send_html(
         message,
-        f"Промокод применён: {h(promo.code)}\n"
-        f"Скидка: {promo.discount_rub} ₽\n\n"
+        f"<b>Промокод применён:</b> {h(promo.code)}\n"
+        f"<b>Скидка:</b> {promo.discount_rub} ₽\n\n"
         "Теперь выберите тариф.",
         reply_markup=subscription_plans_kb(),
     )
@@ -168,10 +168,10 @@ def _plan_choice_text(code: str, months: int, *, final_price: int | None = None,
     if discount:
         discount_line = f"Скидка: <b>{discount} ₽</b>\n"
     return (
-        f"🧾 Вы выбрали: <b>{h(opt.name)}</b>\n"
-        f"Срок: <b>{months} мес</b> (≈ {opt.duration_days} дней)\n"
-        f"Устройства: <b>{opt.devices_limit}</b>\n"
-        f"Стоимость: <b>{price} ₽</b>\n"
+        f"🧾 <b>Выбран тариф:</b> {h(opt.name)}\n"
+        f"<b>Срок:</b> {months} мес (≈ {opt.duration_days} дней)\n"
+        f"<b>Устройства:</b> {opt.devices_limit}\n"
+        f"<b>Стоимость:</b> {price} ₽\n"
         f"{discount_line}"
     )
 
@@ -191,7 +191,7 @@ def _periods_text(code: str, discount_rub: int) -> str:
     options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
     if not options:
         return "Тариф не найден."
-    lines = ["Выберите срок:\n"]
+    lines = ["<b>Выберите срок</b>\n"]
     for opt in options:
         if opt.months == 1:
             months_title = "1 месяц"

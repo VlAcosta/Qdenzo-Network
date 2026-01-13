@@ -32,9 +32,10 @@ async def cb_back(call: CallbackQuery) -> None:
     await edit_message_text(
         call,
         "<b>Главное меню</b>\n\n"
-        f"ID: <code>{user.tg_id}</code>\n"
-        "Баланс: — ₽\n\n"
-        "Выберите действие ниже 👇",
+        f"<b>ID:</b> <code>{user.tg_id}</code>\n"
+        "<b>Баланс:</b> — ₽\n\n"
+        "Выберите действие ниже 👇\n\n"
+        f"<b>Поддержка:</b> {h(settings.support_username)}",
         reply_markup=main_menu(user.is_admin, has_subscription=is_active(sub)),
     )
 
