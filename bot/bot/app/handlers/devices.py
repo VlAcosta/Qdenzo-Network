@@ -294,8 +294,9 @@ async def cb_device_view(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
     device_id = int(call.data.split(":")[-1])
     async with session_scope() as session:
-        device = await get_device(session, device_id)
-        if not device or device.user.tg_id != call.from_user.id:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
             await safe_answer_callback(call, "Устройство не найдено", show_alert=True)
             return
 
@@ -475,8 +476,9 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
     device_id = int(call.data.split(":")[-1])
 
     async with session_scope() as session:
-        device = await get_device(session, device_id)
-        if not device or device.user.tg_id != call.from_user.id:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
             await call.answer("Устройство не найдено", show_alert=True)
             return
         sub = await get_or_create_subscription(session, device.user_id)
