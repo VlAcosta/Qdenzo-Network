@@ -35,7 +35,7 @@ class MarzbanClient:
         default_inbounds: Optional[Dict[str, list[str]]] = None,
         default_proxies: Optional[Dict[str, dict]] = None,
     ):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = self._normalize_base_url(base_url)
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
@@ -67,6 +67,15 @@ class MarzbanClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    @staticmethod
+    def _normalize_base_url(base_url: str) -> str:
+        normalized = (base_url or "").strip().rstrip("/")
+        if normalized.endswith("/api"):
+            normalized = normalized[:-4].rstrip("/")
+        if not normalized:
+            return base_url
+        return normalized
+
     async def _login(self) -> None:
         """
         Логин: некоторые установки Marzban отличаются путём и наличием trailing slash.
@@ -83,6 +92,14 @@ class MarzbanClient:
             f"{self.api_prefix}/token",
             f"{self.api_prefix}/token/",
         ]
+
+        logger.info(
+            "Marzban login start base_url={} api_prefix={} endpoints={}",
+            self.base_url,
+            self.api_prefix,
+            endpoints,
+        )
+
 
         last_status: Optional[int] = None
         last_body: str = ""
@@ -111,7 +128,12 @@ class MarzbanClient:
 
             # 404/405 — пробуем следующий endpoint
             if r.status_code in {404, 405}:
-                logger.debug("Marzban login endpoint not found endpoint={} status={}", ep, r.status_code)
+                logger.debug(
+                    "Marzban login endpoint not found endpoint={} status={} body={}",
+                    ep,
+                    r.status_code,
+                    last_body,
+                )
                 continue
 
             # 401 — фатально (неправильные креды)

@@ -19,11 +19,14 @@ from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_
 router = Router()
 
 
-def _gb(n_bytes: int | None) -> float:
-    if not n_bytes:
+def _gb(n_bytes: int | float | None) -> float:
+    try:
+        return float(n_bytes or 0) / (1024 ** 3)
+    except (TypeError, ValueError):
         return 0.0
-    return n_bytes / (1024 ** 3)
 
+def fmt_gb(x: int | float | None) -> str:
+    return f"{float(x or 0):.2f} GB"
 
 def _plan_limit_gb(plan_code: str) -> int:
     return {
@@ -51,16 +54,19 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
 
     total_used = 0
     lines = []
-    for d in devices:
-        used = 0
-        try:
-            if d.marzban_username:
-                u = await marz.get_user(d.marzban_username)
-                used = int(u.get('used_traffic') or 0)
-        except Exception:
+    try:
+        for d in devices:
             used = 0
-        total_used += used
-        lines.append(f"• {_type_title(d.device_type)} <b>{d.label}</b>: { _gb(used):.2f } GB")
+            try:
+                if d.marzban_username:
+                    u = await marz.get_user(d.marzban_username)
+                    used = int(u.get('used_traffic') or 0)
+            except Exception:
+                used = 0
+            total_used += used
+            lines.append(f"• {_type_title(d.device_type)} <b>{d.label}</b>: {fmt_gb(_gb(used))}")
+    finally:
+        await marz.close()
 
     limit_gb = _plan_limit_gb(sub.plan_code)
     limit_bytes = limit_gb * (1024 ** 3)
@@ -69,7 +75,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
     text = (
         "<b>📊 Трафик</b>\n\n"
         f"План: <b>{sub.plan_code}</b>\n"
-        f"Использовано: <b>{_gb(total_used):.2f} GB</b> / <b>{limit_gb} GB</b>\n"
+        f"Использовано: <b>{fmt_gb(_gb(total_used))}</b> / <b>{limit_gb} GB</b>\n"
         f"Заполнено: <b>{pct:.0f}%</b>\n\n"
         "<b>По устройствам:</b>\n"
         + ("\n".join(lines) if lines else "—")

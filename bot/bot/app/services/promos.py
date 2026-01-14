@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +12,21 @@ from ..models import Promo, PromoRedemption, User
 from .payments.common import load_order_meta
 
 
+PROMO_CODE_RE = re.compile(r"^[A-Z0-9_-]{3,32}$")
+
 def normalize_code(code: str) -> str:
     return (code or "").strip().upper()
+
+
+def validate_promo_code(code: str) -> tuple[str | None, str | None]:
+    normalized = normalize_code(code)
+    if not normalized:
+        return None, "Введите промокод."
+    if len(normalized) < 3 or len(normalized) > 32:
+        return None, "Длина промокода должна быть от 3 до 32 символов."
+    if not PROMO_CODE_RE.fullmatch(normalized):
+        return None, "Промокод может содержать только A-Z, 0-9, '_' и '-' без пробелов."
+    return normalized, None
 
 
 async def get_promo_by_code(session: AsyncSession, code: str) -> Promo | None:
@@ -35,39 +49,42 @@ async def create_promo(
     discount_rub: int,
     max_uses: int,
 ) -> Promo:
-    promo = Promo(
-        code=normalize_code(code),
-        discount_rub=discount_rub,
-        max_uses=max_uses,
-        used_count=0,
-        active=True,
-        created_at=datetime.now(timezone.utc),
-    )
-    session.add(promo)
-    await session.commit()
+    normalized, error = validate_promo_code(code)
+    if error:
+        raise ValueError(error)
+    async with session.begin():
+        promo = Promo(
+            code=normalized,
+            discount_rub=discount_rub,
+            max_uses=max_uses,
+            used_count=0,
+            active=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(promo)
     await session.refresh(promo)
     return promo
 
 
 async def toggle_promo(session: AsyncSession, promo_id: int) -> Promo | None:
-    q = await session.execute(select(Promo).where(Promo.id == promo_id))
-    promo = q.scalar_one_or_none()
-    if not promo:
-        return None
-    promo.active = not promo.active
-    session.add(promo)
-    await session.commit()
+    async with session.begin():
+        q = await session.execute(select(Promo).where(Promo.id == promo_id))
+        promo = q.scalar_one_or_none()
+        if not promo:
+            return None
+        promo.active = not promo.active
+        session.add(promo)
     await session.refresh(promo)
     return promo
 
 
 async def delete_promo(session: AsyncSession, promo_id: int) -> bool:
-    q = await session.execute(select(Promo).where(Promo.id == promo_id))
-    promo = q.scalar_one_or_none()
-    if not promo:
-        return False
-    await session.delete(promo)
-    await session.commit()
+    async with session.begin():
+        q = await session.execute(select(Promo).where(Promo.id == promo_id))
+        promo = q.scalar_one_or_none()
+        if not promo:
+            return False
+        await session.delete(promo)
     return True
 
 

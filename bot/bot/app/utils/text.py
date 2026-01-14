@@ -36,3 +36,15 @@ def fmt_timedelta_seconds(sec: int) -> str:
     if rem_m and not days:
         parts.append(f"{rem_m} мин")
     return ' '.join(parts) if parts else f"{sec} сек"
+
+def months_title(n: int, *, short: bool = False) -> str:
+    if short:
+        return "мес"
+    n_abs = abs(int(n))
+    if 11 <= (n_abs % 100) <= 14:
+        return "месяцев"
+    if n_abs % 10 == 1:
+        return "месяц"
+    if n_abs % 10 in (2, 3, 4):
+        return "месяца"
+    return "месяцев"

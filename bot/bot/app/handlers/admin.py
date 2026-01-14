@@ -48,11 +48,18 @@ from ..services.payments import (
     is_cryptopay_paid,
     is_yookassa_paid,
 )
-from ..services.promos import create_promo, delete_promo, get_promo_by_code, list_promos, toggle_promo
+from ..services.promos import (
+    create_promo,
+    delete_promo,
+    get_promo_by_code,
+    list_promos,
+    toggle_promo,
+    validate_promo_code,
+)
 from ..services.subscriptions import get_or_create_subscription, is_active, now_utc
 from ..services.traffic import top_users_by_traffic, total_traffic
 from ..utils.telegram import edit_message_text, safe_answer_callback
-from ..utils.text import fmt_dt, h
+from ..utils.text import fmt_dt, h, months_title
 
 router = Router()
 
@@ -196,16 +203,16 @@ async def msg_admin_promo_code(message: Message, state: FSMContext) -> None:
     if not _ensure_admin(message.from_user.id):
         await _admin_access_denied(message)
         return
-    code = (message.text or "").strip()
-    if not code:
-        await message.answer("Введите код промокода:", reply_markup=admin_back_kb("admin:promos"))
+    normalized, error = validate_promo_code(message.text or "")
+    if error:
+        await message.answer(f"{error}\nВведите код промокода:", reply_markup=admin_back_kb("admin:promos"))
         return
     async with session_scope() as session:
-        existing = await get_promo_by_code(session, code)
+        existing = await get_promo_by_code(session, normalized)
         if existing:
             await message.answer("Такой промокод уже существует. Введите другой.")
             return
-    await state.update_data(code=code)
+    await state.update_data(code=normalized)
     await state.set_state(AdminStates.promo_discount)
     await message.answer("Введите скидку в рублях (целое число):")
 
@@ -250,7 +257,12 @@ async def msg_admin_promo_max_uses(message: Message, state: FSMContext) -> None:
             await message.answer("Такой промокод уже существует. Начните заново.")
             await state.clear()
             return
-        await create_promo(session, code=code, discount_rub=discount, max_uses=max_uses)
+        try:
+            await create_promo(session, code=code, discount_rub=discount, max_uses=max_uses)
+        except ValueError as exc:
+            await message.answer(f"Ошибка промокода: {exc}")
+            await state.clear()
+            return
         promos = await list_promos(session)
     await state.clear()
     await message.answer("✅ Промокод создан.", reply_markup=admin_promos_kb(promos))
@@ -433,7 +445,7 @@ async def cb_admin_plan_option(call: CallbackQuery) -> None:
     months = int(months_s)
     text = (
         f"Тариф: <b>{h(plan_title(plan_code))}</b>\n"
-        f"Период: <b>{months} мес</b>\n\n"
+        f"Период: <b>{months} {months_title(months, short=True)}</b>\n\n"
         "Как применить тариф?"
     )
     await edit_message_text(
@@ -647,9 +659,10 @@ async def cb_admin_payments(call: CallbackQuery) -> None:
 
     lines = ["💳 <b>Платежи</b>\n"]
     for o in orders:
+        months = int(o.months or 0)
         lines.append(
-            f"• #{o.id} — {o.amount or o.amount_rub} {h(o.currency)} — "
-            f"{h(o.provider)} — {h(o.status)} — user {o.user_id}"
+            f"• #{o.id} — {h(o.plan_code)} {months} {months_title(months, short=True)} "
+            f"— {o.amount_rub}₽ — {h(o.provider)} — {fmt_dt(o.created_at)}"
         )
     text = "\n".join(lines)
     await edit_message_text(call, text, reply_markup=admin_payments_kb(orders))

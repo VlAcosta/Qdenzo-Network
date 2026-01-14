@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import Order
 from ..services.catalog import PlanOption, plan_title
+from ..utils.text import months_title
 
 
 def admin_kb() -> InlineKeyboardMarkup:
@@ -103,7 +104,7 @@ def admin_plan_groups_kb(user_id: int, plan_codes: list[str], *, back_cb: str) -
 def admin_plan_options_kb(user_id: int, options: list[PlanOption], *, back_cb: str) -> InlineKeyboardMarkup:
     rows = []
     for opt in options:
-        title = f"{opt.name} — {opt.months} мес"
+        title = f"{opt.name} — {opt.months} {months_title(opt.months, short=True)}"
         rows.append([InlineKeyboardButton(text=title, callback_data=f'admin:plan_option:{user_id}:{opt.code}:{opt.months}')])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)

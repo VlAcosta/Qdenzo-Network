@@ -36,7 +36,7 @@ from ..services.devices import count_active_devices
 from ..services.promos import promo_available_for_user, redeem_promo_to_balance
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import ensure_user
-from ..utils.text import fmt_dt, h
+from ..utils.text import fmt_dt, h, months_title
 from ..utils.telegram import edit_message_text, safe_answer_callback, send_html, send_html_with_photo
 
 router = Router()
@@ -165,7 +165,7 @@ def _plan_choice_text(code: str, months: int, *, final_price: int | None = None,
         discount_line = f"Скидка: <b>{discount} ₽</b>\n"
     return (
         f"🧾 <b>Выбран тариф:</b> {h(opt.name)}\n"
-        f"<b>Срок:</b> {months} мес (≈ {opt.duration_days} дней)\n"
+        f"<b>Срок:</b> {months} {months_title(months, short=True)} (≈ {opt.duration_days} дней)\n"
         f"<b>Устройства:</b> {opt.devices_limit}\n"
         f"<b>Стоимость:</b> {price} ₽\n"
         f"{discount_line}"
@@ -189,17 +189,12 @@ def _periods_text(code: str, discount_rub: int) -> str:
         return "Тариф не найден."
     lines = ["<b>Выберите срок</b>\n"]
     for opt in options:
-        if opt.months == 1:
-            months_title = "1 месяц"
-        elif opt.months in (2, 3, 4):
-            months_title = f"{opt.months} месяца"
-        else:
-            months_title = f"{opt.months} месяцев"
+        months_label = f"{opt.months} {months_title(opt.months, short=False)}"
         final_price = max(0, opt.price_rub - discount_rub) if discount_rub else opt.price_rub
         if discount_rub and final_price != opt.price_rub:
-            lines.append(f"{months_title} — {opt.price_rub} ₽ → {final_price} ₽")
+            lines.append(f"{months_label} — {opt.price_rub} ₽ → {final_price} ₽")
         else:
-            lines.append(f"{months_title} — {opt.price_rub} ₽")
+            lines.append(f"{months_label} — {opt.price_rub} ₽")
     return "\n".join(lines)
 
 
@@ -407,7 +402,7 @@ async def cb_plan(call: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     admin_text = (
         f"🧾 <b>Новый заказ</b> #{order.id}\n"
         f"Пользователь: <code>{user.tg_id}</code> (@{h(user.username)})\n"
-        f"Тариф: <b>{h(opt.name)}</b> {months} мес\n"
+        f"Тариф: <b>{h(opt.name)}</b> {months} {months_title(months, short=True)}\n"
         f"Сумма: <b>{order.amount_rub} ₽</b>\n"
     )
     from ..keyboards.admin import admin_order_action_kb
@@ -739,7 +734,8 @@ async def cb_stars_pay(call: CallbackQuery, bot: Bot) -> None:
     await bot.send_invoice(
         chat_id=call.message.chat.id,
         title=f"Подписка {plan.name}",
-        description=f"{plan.name} на {plan.months} мес. К оплате: {stars_amount} ⭐",
+        description=f"{plan.name} на {plan.months} {months_title(plan.months, short=True)}. "
+        f"К оплате: {stars_amount} ⭐",
         payload=payload,
         currency="XTR",
         prices=[LabeledPrice(label="Подписка", amount=stars_amount)],
