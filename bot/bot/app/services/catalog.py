@@ -14,6 +14,11 @@ class PlanOption:
     devices_limit: int
     name: str
 
+@dataclass(frozen=True)
+class PlanDetails:
+    devices: str
+    traffic: str
+    scenarios: str
 
 # Month = 30 days (as requested)
 DAYS_PER_MONTH = 30
@@ -44,6 +49,23 @@ PLAN_OPTIONS: list[PlanOption] = [
     PlanOption(code='family', months=12, duration_days=12 * DAYS_PER_MONTH, price_rub=2999, devices_limit=10, name='Family'),
 ]
 
+PLAN_DETAILS: dict[str, PlanDetails] = {
+    "start": PlanDetails(
+        devices="до 3 устройств",
+        traffic="до 500 ГБ/мес",
+        scenarios="личный смартфон, ноутбук и ТВ",
+    ),
+    "pro": PlanDetails(
+        devices="до 5 устройств",
+        traffic="до 1 ТБ/мес",
+        scenarios="работа, стриминг и несколько гаджетов",
+    ),
+    "family": PlanDetails(
+        devices="до 10 устройств",
+        traffic="до 2 ТБ/мес",
+        scenarios="семья, несколько ТВ и детские профили",
+    ),
+}
 
 def plan_options(*, include_trial: bool = True) -> list[PlanOption]:
     """Return plan options for keyboards/handlers.
@@ -79,6 +101,22 @@ def plan_title(code: str) -> str:
         'pro': 'Pro',
         'family': 'Family',
     }.get(code, code)
+
+
+def plan_details(code: str) -> PlanDetails | None:
+    return PLAN_DETAILS.get(code)
+
+
+def plan_details_text(code: str) -> str:
+    details = plan_details(code)
+    if not details:
+        return "—"
+    return (
+        f"Устройства: <b>{details.devices}</b>\n"
+        f"Трафик: <b>{details.traffic}</b>\n"
+        f"Подходит для: <b>{details.scenarios}</b>"
+    )
+
 
 
 # Referral bonus matrix (seconds) per your latest rules.

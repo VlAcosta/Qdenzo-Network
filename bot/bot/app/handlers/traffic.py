@@ -18,6 +18,16 @@ from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_
 
 router = Router()
 
+def _marzban_client() -> MarzbanClient:
+    return MarzbanClient(
+        base_url=str(settings.marzban_base_url),
+        username=settings.marzban_username,
+        password=settings.marzban_password,
+        verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
+    )
 
 def _gb(n_bytes: int | float | None) -> float:
     try:
@@ -44,13 +54,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
         sub = await get_or_create_subscription(session, user_id)
         devices = await list_devices(session, user_id)
 
-    marz = MarzbanClient(
-        base_url=str(settings.marzban_base_url),
-        username=settings.marzban_username,
-        password=settings.marzban_password,
-        verify_ssl=settings.marzban_verify_ssl,
-        api_prefix=settings.marzban_api_prefix,
-    )
+    marz = _marzban_client()
 
     total_used = 0
     lines = []
@@ -64,7 +68,7 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
             except Exception:
                 used = 0
             total_used += used
-            lines.append(f"• {_type_title(d.device_type)} <b>{d.label}</b>: {fmt_gb(_gb(used))}")
+            lines.append(f"• {_type_title(d.device_type)} <b>{d.label}</b>: {_gb(used):.2f} GB")
     finally:
         await marz.close()
 
@@ -74,14 +78,14 @@ async def _render(call_or_msg, *, user_id: int, tg_id: int, edit: bool) -> None:
 
     text = (
         "<b>📊 Трафик</b>\n\n"
-        f"План: <b>{sub.plan_code}</b>\n"
+        f"План: <b>{sub.plan_code.upper()}</b>\n"
         f"Использовано: <b>{fmt_gb(_gb(total_used))}</b> / <b>{limit_gb} GB</b>\n"
         f"Заполнено: <b>{pct:.0f}%</b>\n\n"
         "<b>По устройствам:</b>\n"
         + ("\n".join(lines) if lines else "—")
         + "\n\n"
-        "<b>Soft cap</b>: при 100% интернет не отключается — включается Traffic Saver Mode.\n"
-        "Traffic Saver Mode: ограничивает Streaming/Gaming; оставляет Smart/Work/Low Internet."
+        "При достижении лимита скорость может быть снижена,\n"
+        "но базовые профили останутся доступными."
     )
 
     if edit:

@@ -47,6 +47,17 @@ HAPP_URL_DEFAULT = "https://www.happ.su/"
 class DeviceStates(StatesGroup):
     renaming_device = State()
 
+def _marzban_client() -> MarzbanClient:
+    return MarzbanClient(
+        base_url=str(settings.marzban_base_url),
+        username=settings.marzban_username,
+        password=settings.marzban_password,
+        verify_ssl=settings.marzban_verify_ssl,
+        api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
+    )
+
 def _connect_instruction_text() -> str:
     return (
         "📄 <b>Инструкция по подключению</b>\n\n"
@@ -70,13 +81,7 @@ def _happ_proxy_cfg() -> HappProxyConfig | None:
 async def _resolve_device_urls(device) -> tuple[str | None, str | None]:
     if not device.marzban_username:
         return None, None
-    marz = MarzbanClient(
-        base_url=str(settings.marzban_base_url),
-        username=settings.marzban_username,
-        password=settings.marzban_password,
-        verify_ssl=settings.marzban_verify_ssl,
-        api_prefix=settings.marzban_api_prefix,
-    )
+    marz = _marzban_client()
     try:
         link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
     finally:
@@ -208,11 +213,14 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
         )
 
     if not limited_url:
-        text = "Ссылка для подключения пока недоступна. Попробуйте позже или обратитесь в поддержку."
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
-            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
-        ]])
+        text = "Сервис временно отвечает медленно, попробуйте ещё раз."
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:connect:{device_id}")],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+            ],
+        ])
         if isinstance(call_or_message, CallbackQuery):
             await edit_message_text(call_or_message, text, reply_markup=kb)
             await safe_answer_callback(call_or_message)
@@ -370,13 +378,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
             await call.answer()
             return
 
-    marz = MarzbanClient(
-        base_url=str(settings.marzban_base_url),
-        username=settings.marzban_username,
-        password=settings.marzban_password,
-        verify_ssl=settings.marzban_verify_ssl,
-        api_prefix=settings.marzban_api_prefix,
-    )
+    marz = _marzban_client()
     try:
         try:
             device = await create_device(
@@ -418,7 +420,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
     )
     if not plain_url:
         await call.message.answer(
-            "Ссылка для подключения пока недоступна. Попробуйте позже или обратитесь в поддержку."
+            "Сервис временно отвечает медленно, попробуйте ещё раз."
         )
         await call.answer()
         return
@@ -487,13 +489,7 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         await call.answer("Подписка не активна", show_alert=True)
         return
 
-    marz = MarzbanClient(
-        base_url=str(settings.marzban_base_url),
-        username=settings.marzban_username,
-        password=settings.marzban_password,
-        verify_ssl=settings.marzban_verify_ssl,
-        api_prefix=settings.marzban_api_prefix,
-    )
+    marz = _marzban_client()
     try:
         link, subscription_url = (None, None)
         if device.marzban_username:
@@ -506,6 +502,16 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         rows.append([InlineKeyboardButton(text="🔗 Открыть / Импортировать", url=link)])
     if subscription_url:
         rows.append([InlineKeyboardButton(text="📥 Подписка (subscription)", url=subscription_url)])
+    if not link and not subscription_url:
+        rows.append([InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:cfg:{device_id}")])
+        rows.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+        ])
+        text = "Сервис временно отвечает медленно, попробуйте ещё раз."
+        await edit_message_text(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return
+
     rows.append([
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
@@ -541,7 +547,14 @@ async def cb_device_show_link(call: CallbackQuery) -> None:
         limited_url, _ = await _build_connect_links(session, device, install_limit=sub.devices_limit)
 
     if not limited_url:
-        await call.answer("Ссылка пока недоступна", show_alert=True)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:show_link:{device_id}")],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+            ],
+        ])
+        await edit_message_text(call, "Сервис временно отвечает медленно, попробуйте ещё раз.", reply_markup=kb)
         return
 
     text = (

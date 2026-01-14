@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     marzban_password: str = Field(..., alias='MARZBAN_PASSWORD')
     marzban_verify_ssl: bool = Field(True, alias='MARZBAN_VERIFY_SSL')
     marzban_api_prefix: str = Field('/api', alias='MARZBAN_API_PREFIX')
+    marzban_inbound_tag: str = Field('vless-reality', alias='VLESS_INBOUND_TAG')
+    marzban_proxy_type: str = Field('vless', alias='PROXY_TYPE')
 
     # How to provide config links to users:
     # - auto: prefer Marzban user 'links', fallback to subscription_url, fallback to manual builder

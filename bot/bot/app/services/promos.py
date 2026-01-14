@@ -10,12 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Promo, PromoRedemption, User
 from .payments.common import load_order_meta
+from loguru import logger
 
 
 PROMO_CODE_RE = re.compile(r"^[A-Z0-9_-]{3,32}$")
 
+
 def normalize_code(code: str) -> str:
     return (code or "").strip().upper()
+
 
 
 def validate_promo_code(code: str) -> tuple[str | None, str | None]:
@@ -63,6 +66,7 @@ async def create_promo(
         )
         session.add(promo)
     await session.refresh(promo)
+    logger.info("Promo created code={} discount={} max_uses={}", promo.code, promo.discount_rub, promo.max_uses)
     return promo
 
 
@@ -75,6 +79,7 @@ async def toggle_promo(session: AsyncSession, promo_id: int) -> Promo | None:
         promo.active = not promo.active
         session.add(promo)
     await session.refresh(promo)
+    logger.info("Promo toggled code={} active={}", promo.code, promo.active)
     return promo
 
 
@@ -85,6 +90,7 @@ async def delete_promo(session: AsyncSession, promo_id: int) -> bool:
         if not promo:
             return False
         await session.delete(promo)
+    logger.info("Promo deleted code={}", promo.code)
     return True
 
 
@@ -96,8 +102,10 @@ async def promo_available_for_user(
 ) -> tuple[Promo | None, str | None]:
     promo = await get_promo_by_code(session, code)
     if not promo or not promo.active:
+        logger.info("Promo unavailable code={} user_id={}", code, user_id)
         return None, "Промокод не найден или больше недоступен."
     if promo.max_uses and promo.used_count >= promo.max_uses:
+        logger.info("Promo exhausted code={} user_id={}", code, user_id)
         return None, "Промокод не найден или больше недоступен."
     q = await session.execute(
         select(PromoRedemption).where(
@@ -106,6 +114,7 @@ async def promo_available_for_user(
         )
     )
     if q.scalar_one_or_none():
+        logger.info("Promo already used code={} user_id={}", promo.code, user_id)
         return None, "Промокод не найден или больше недоступен."
     return promo, None
 
@@ -134,6 +143,7 @@ async def redeem_promo_for_order(session: AsyncSession, *, order, user_id: int) 
     promo.used_count = (promo.used_count or 0) + 1
     session.add_all([promo, redemption])
     await session.commit()
+    logger.info("Promo redeemed for order promo_id={} order_id={}", promo.id, order.id)
     return True
 
 
@@ -149,4 +159,5 @@ async def redeem_promo_to_balance(session: AsyncSession, *, promo: Promo, user: 
     session.add_all([promo, redemption, user])
     await session.commit()
     await session.refresh(user)
+    logger.info("Promo redeemed to balance promo_id={} user_id={}", promo.id, user.id)
     return user.balance_rub

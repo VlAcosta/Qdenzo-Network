@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Subscription, User
 from .catalog import PlanOption, TRIAL_HOURS, get_plan_option
 
+from loguru import logger
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -63,9 +64,11 @@ async def activate_trial(session: AsyncSession, user: User) -> tuple[bool, str]:
     sub = await get_or_create_subscription(session, user.id)
 
     if sub.trial_used:
-        return False, "Бесплатный доступ уже был использован."
+        logger.info("Trial already used user_id={}", user.id)
+        return False, "🎁 Бесплатный период уже был активирован ранее.\nВыберите тариф, чтобы продолжить."
     # If user already has an active paid plan, do not allow trial.
     if is_active(sub) and sub.plan_code != 'trial':
+        logger.info("Trial blocked for active paid plan user_id={}", user.id)
         return False, "У вас уже есть активная подписка."
 
     trial_opt = get_plan_option('trial', 0)
@@ -79,6 +82,7 @@ async def activate_trial(session: AsyncSession, user: User) -> tuple[bool, str]:
     session.add(sub)
     await session.commit()
     await session.refresh(sub)
+    logger.info("Trial activated user_id={} expires_at={}", user.id, sub.expires_at)
     return True, "Бесплатный доступ активирован."
 
 
@@ -103,6 +107,7 @@ async def apply_plan_purchase(session: AsyncSession, user: User, opt: PlanOption
     session.add(sub)
     await session.commit()
     await session.refresh(sub)
+    logger.info("Subscription updated user_id={} plan={} expires_at={}", user.id, opt.code, sub.expires_at)
     return new_expires
 
 

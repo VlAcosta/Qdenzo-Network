@@ -15,8 +15,9 @@ def onboarding_continue_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def onboarding_finish_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Попробовать бесплатно (48 часов)", callback_data="plan:trial:0")],
-        [InlineKeyboardButton(text="Перейти в главное меню", callback_data="nav:home")],
-    ])
+def onboarding_finish_kb(*, include_trial: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if include_trial:
+        rows.append([InlineKeyboardButton(text="🎁 Попробовать бесплатно (48 часов)", callback_data="plan:trial:0")])
+    rows.append([InlineKeyboardButton(text="Перейти в главное меню", callback_data="nav:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

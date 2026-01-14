@@ -84,6 +84,8 @@ async def _traffic_collector_loop() -> None:
                     password=settings.marzban_password,
                     verify_ssl=settings.marzban_verify_ssl,
                     api_prefix=settings.marzban_api_prefix,
+                    default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+                    default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
                 )
                 try:
                     await collect_traffic_snapshots(session, marz=marz)

@@ -17,7 +17,7 @@ from ..keyboards.plans import plan_groups_kb, plan_options_kb
 from ..keyboards.subscription import subscription_kb
 from ..models import Order
 from ..services import get_or_create_subscription
-from ..services.catalog import list_plan_options_by_code, plan_options, plan_title
+from ..services.catalog import list_plan_options_by_code, plan_details_text, plan_options, plan_title
 from ..services.devices import count_active_devices
 from ..services.users import ensure_user
 from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
@@ -56,10 +56,7 @@ async def cmd_sub(message: Message) -> None:
         f"Устройства: <b>{used}/{sub.devices_limit}</b>\n"
         "\n<b>Доступные профили:</b>\n"
         + _profiles_for_plan(sub.plan_code)
-        + "\n\n<b>Лимиты по тарифам:</b>\n"
-        "Start — 3 устройства (1 телефон, 1 ПК, 1 ТВ)\n"
-        "Pro — 5 устройств (макс: 1 ПК, 2 ТВ, 3 телефон/планшет)\n"
-        "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
+        + "\n\nУправляйте тарифом и устройствами ниже."
     )
     await send_html_with_photo(
         message,
@@ -85,10 +82,7 @@ async def cb_sub(call: CallbackQuery) -> None:
         f"Устройства: <b>{used}/{sub.devices_limit}</b>\n"
         "\n<b>Доступные профили:</b>\n"
         + _profiles_for_plan(sub.plan_code)
-        + "\n\n<b>Лимиты по тарифам:</b>\n"
-        "Start — 3 устройства (1 телефон, 1 ПК, 1 ТВ)\n"
-        "Pro — 5 устройств (макс: 1 ПК, 2 ТВ, 3 телефон/планшет)\n"
-        "Family — 10 устройств (макс: 5 телефон/планшет, 2 ПК, 3 ТВ)\n"
+        + "\n\nУправляйте тарифом и устройствами ниже."
     )
     await edit_message_text(call, text, reply_markup=subscription_kb())
     await safe_answer_callback(call)
@@ -106,7 +100,7 @@ async def cb_sub_renew(call: CallbackQuery) -> None:
         f"🔄 <b>Продлить подписку</b>\n\n"
         f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
-        "Продлить на:"
+        "Выберите срок продления:"
     )
     await edit_message_text(
         call,
@@ -128,7 +122,7 @@ async def cb_sub_change(call: CallbackQuery) -> None:
         f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
         f"Действует до: <b>{fmt_dt(sub.expires_at)}</b>\n\n"
         "Новый тариф применится сразу после оплаты.\n\n"
-        "Сменить тариф: выберите новый 👇"
+        "Выберите новый тариф 👇"
     )
     await edit_message_text(
         call,
@@ -164,10 +158,10 @@ async def cb_sub_change_group(call: CallbackQuery) -> None:
         return
 
     text = (
-        f"🛠 <b>Сменить тариф</b>\n\n"
-        f"Сейчас у вас: <b>{h(plan_title(sub.plan_code))}</b>\n"
-        f"Новый тариф: <b>{h(plan_title(code))}</b>\n\n"
-        "Выберите период подписки:"
+        f"ℹ️ <b>О тарифе {h(plan_title(code))}</b>\n"
+        f"{plan_details_text(code)}\n\n"
+        f"<b>{h(plan_title(code))}</b>\n"
+        "Выберите срок:"
     )
     await edit_message_text(
         call,

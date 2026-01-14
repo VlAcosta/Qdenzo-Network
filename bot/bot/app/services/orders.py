@@ -15,6 +15,7 @@ from .payments.common import load_order_meta
 from .devices import enforce_device_limit, sync_devices_expire
 from .referrals import maybe_grant_referral_bonus
 from .subscriptions import apply_plan_purchase, get_or_create_subscription, is_active, now_utc
+from loguru import logger
 
 
 async def create_subscription_order(
@@ -52,6 +53,7 @@ async def create_subscription_order(
     session.add(order)
     await session.commit()
     await session.refresh(order)
+    logger.info("Order created id={} user_id={} plan={} months={} amount={}", order.id, user_id, plan_code, months, order.amount_rub)
     return order
 
 
@@ -103,6 +105,7 @@ async def mark_order_paid(
     order.paid_at = now_utc()
     session.add(order)
     await session.commit()
+    logger.info("Order paid id={} user_id={} plan={} months={}", order.id, user.id, order.plan_code, order.months)
 
     notes: list[str] = []
     if disabled:

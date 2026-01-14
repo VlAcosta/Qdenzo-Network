@@ -228,8 +228,10 @@ async def get_device_connection_links(marz: MarzbanClient, marzban_username: str
     try:
         u = await marz.get_user(marzban_username)
     except MarzbanError:
+        logger.warning("Marzban get_user failed for username={}", marzban_username)
         return None, None
     if not u:
+        logger.warning("Marzban user not found for username={}", marzban_username)
         return None, None
     links = u.get('links') or []
     sub_url = u.get('subscription_url')

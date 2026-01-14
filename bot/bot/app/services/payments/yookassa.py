@@ -99,6 +99,7 @@ class YooKassaClient:
         }
         result = await self._request("POST", "/payments", payload, idempotence_key=idempotence_key or str(uuid4()))
         confirmation_url = result.get("confirmation", {}).get("confirmation_url")
+        logger.info("YooKassa payment created amount={} description={}", amount_rub, description)
         return YooKassaPayment(
             payment_id=str(result["id"]),
             status=str(result.get("status", "")),

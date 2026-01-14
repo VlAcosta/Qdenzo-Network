@@ -49,6 +49,8 @@ class MarzbanClient:
             follow_redirects=True,
         )
         self._token: Optional[MarzbanAdminToken] = None
+        self._diag_logged = False
+        self._inbounds_cache: Dict[str, list[str]] | None = None
 
         # api_prefix normalization
         if api_prefix is None:
@@ -135,6 +137,10 @@ class MarzbanClient:
                     last_body,
                 )
                 continue
+            
+            if r.status_code in {307, 308}:
+                logger.info("Marzban login redirect endpoint={} status={} location={}", ep, r.status_code, r.headers.get("location"))
+                continue
 
             # 401 — фатально (неправильные креды)
             if r.status_code in {401, 403}:
@@ -191,6 +197,16 @@ class MarzbanClient:
                 )
                 await asyncio.sleep(self.backoff_base * attempt)
                 continue
+
+            if not self._diag_logged:
+                self._diag_logged = True
+                logger.info(
+                    "Marzban diag base_url={} api_prefix={} endpoint={} status={}",
+                    self.base_url,
+                    self.api_prefix,
+                    str(r.request.url),
+                    r.status_code,
+                )
 
             if r.status_code in {401, 403}:
                 last_error = MarzbanError(f"Auth error {r.status_code}: {r.text}")
@@ -252,12 +268,24 @@ class MarzbanClient:
         Осторожно: у тебя endpoint /api/user/{username} может 500, если у юзера proxies=[]
         """
         try:
-            return await self._request("GET", f"{self.api_prefix}/user/{username}")
+            user = await self._request("GET", f"{self.api_prefix}/user/{username}")
         except MarzbanError as e:
             s = str(e)
             if "error 404" in s.lower() or " 404" in s:
                 return None
             raise
+
+        if isinstance(user, dict) and not user.get("proxies"):
+            try:
+                inbounds, proxies = await self._resolve_inbounds_proxies()
+                if proxies:
+                    logger.warning("Marzban user {} returned empty proxies, patching defaults", username)
+                    updated = await self.update_user(username, inbounds=inbounds, proxies=proxies)
+                    if isinstance(updated, dict):
+                        user = updated
+            except Exception as exc:
+                logger.warning("Marzban user {} proxies patch failed: {}", username, exc)
+        return user
 
     async def modify_user(self, username: str, **fields: Any) -> Dict[str, Any]:
         return await self._request("PUT", f"{self.api_prefix}/user/{username}", json=fields)
@@ -273,6 +301,52 @@ class MarzbanClient:
 
     async def revoke_subscription(self, username: str) -> Any:
         return await self._request("POST", f"{self.api_prefix}/user/{username}/revoke_sub")
+
+    async def get_system_info(self) -> Dict[str, Any] | None:
+        try:
+            return await self._request("GET", f"{self.api_prefix}/system")
+        except MarzbanError as exc:
+            if "404" in str(exc):
+                return None
+            raise
+
+    async def list_inbounds(self) -> Dict[str, list[str]] | None:
+        try:
+            data = await self._request("GET", f"{self.api_prefix}/inbounds")
+        except MarzbanError as exc:
+            if "404" in str(exc):
+                return None
+            raise
+        items = None
+        if isinstance(data, dict):
+            items = data.get("inbounds") or data.get("items")
+        elif isinstance(data, list):
+            items = data
+        if not isinstance(items, list):
+            return None
+        resolved: Dict[str, list[str]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tag = item.get("tag") or item.get("name")
+            protocol = item.get("protocol") or item.get("type")
+            if not tag or not protocol:
+                continue
+            resolved.setdefault(str(protocol), []).append(str(tag))
+        if resolved:
+            self._inbounds_cache = resolved
+            return resolved
+        return None
+
+    async def _resolve_inbounds_proxies(self) -> tuple[Dict[str, list[str]], Dict[str, dict]]:
+        if self._inbounds_cache is None:
+            try:
+                await self.list_inbounds()
+            except MarzbanError as exc:
+                logger.warning("Marzban inbounds lookup failed: {}", exc)
+        inbounds = self._inbounds_cache or self.default_inbounds
+        proxies = self.default_proxies
+        return inbounds, proxies
 
     # -------- CREATE USER (CRITICAL) --------
 
@@ -293,10 +367,12 @@ class MarzbanClient:
         Всегда задаём inbounds/proxies, чтобы Marzban не создавал пользователя с proxies=[]
         """
 
-        if inbounds is None:
-            inbounds = self.default_inbounds
-        if proxies is None:
-            proxies = self.default_proxies
+        if inbounds is None or proxies is None:
+            resolved_inbounds, resolved_proxies = await self._resolve_inbounds_proxies()
+            if inbounds is None:
+                inbounds = resolved_inbounds
+            if proxies is None:
+                proxies = resolved_proxies
 
         body: Dict[str, Any] = {
             "username": username,
@@ -325,6 +401,11 @@ class MarzbanClient:
             # 409 exists — не дергаем get_user(), делаем идемпотентность
             if "409" in msg and ("exist" in msg or "already" in msg):
                 logger.info("Marzban: user already exists, reusing username={}", username)
+                try:
+                    if inbounds and proxies:
+                        await self.update_user(username, inbounds=inbounds, proxies=proxies)
+                except Exception as upd_exc:
+                    logger.warning("Marzban: user update after 409 failed for {}: {}", username, upd_exc)
                 return {"username": username}
 
             raise

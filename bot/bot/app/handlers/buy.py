@@ -17,7 +17,7 @@ from loguru import logger
 from ..marzban.client import MarzbanClient
 from ..models import Order
 from ..services.orders import mark_order_paid
-from ..services.catalog import get_plan_option, plan_options, plan_title
+from ..services.catalog import get_plan_option, plan_details_text, plan_options, plan_title
 from ..services.payments import (
     CryptoPayClient,
     YooKassaClient,
@@ -33,7 +33,7 @@ from ..keyboards.orders import order_canceled_kb, order_payment_kb
 from ..keyboards.plans import plan_options_kb, plans_kb
 from ..services import create_subscription_order, get_order, get_or_create_subscription
 from ..services.devices import count_active_devices
-from ..services.promos import promo_available_for_user, redeem_promo_to_balance
+from ..services.promos import promo_available_for_user, redeem_promo_to_balance, validate_promo_code
 from ..services.subscriptions import activate_trial, is_active
 from ..services.users import ensure_user
 from ..utils.text import fmt_dt, h, months_title
@@ -47,9 +47,13 @@ class BuyStates(StatesGroup):
 
 @router.message(BuyStates.promo_input)
 async def msg_promo_input(message: Message, state: FSMContext) -> None:
-    code = (message.text or "").strip()
-    if not code:
+    raw_code = (message.text or "").strip()
+    if not raw_code:
         await send_html(message, "Введите промокод:")
+        return
+    code, error = validate_promo_code(raw_code)
+    if error:
+        await send_html(message, h(error))
         return
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=message.from_user)
@@ -59,6 +63,7 @@ async def msg_promo_input(message: Message, state: FSMContext) -> None:
             await state.clear()
             return
         balance = await redeem_promo_to_balance(session, promo=promo, user=user)
+        sub = await get_or_create_subscription(session, user.id)
 
     await send_html(
         message,
@@ -66,7 +71,7 @@ async def msg_promo_input(message: Message, state: FSMContext) -> None:
         f"💰 <b>Зачислено на баланс:</b> {promo.discount_rub} ₽\n"
         f"Баланс: <b>{balance} ₽</b>\n\n"
         "Теперь выберите тариф 👇",
-        reply_markup=subscription_plans_kb(),
+        reply_markup=subscription_plans_kb(include_trial=not sub.trial_used),
     )
     await state.clear()
 
@@ -79,6 +84,8 @@ def _marzban_client() -> MarzbanClient:
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
         api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
     )
 
 
@@ -174,28 +181,11 @@ def _plan_choice_text(code: str, months: int, *, final_price: int | None = None,
 
 def _plans_menu_text() -> str:
     return (
-        "<b>Выберите подходящий тариф:</b>\n\n"
-        "🎁 Попробовать бесплатно (48 часов)\n\n"
-        "Start — от 249 ₽\n"
-        "Pro — от 399 ₽\n"
-        "Family — от 1099 ₽\n\n"
-        "🎟 Ввести промокод\n"
-        "⬅ Назад"
+        "<b>Выберите подходящий тариф</b>\n\n"
+        "Стабильный VLESS/Reality, быстрый старт и поддержка 7/7.\n"
+        "Подберите план под свой ритм — сменить можно в любой момент.\n\n"
+        "Выберите тариф ниже 👇"
     )
-
-def _periods_text(code: str, discount_rub: int) -> str:
-    options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
-    if not options:
-        return "Тариф не найден."
-    lines = ["<b>Выберите срок</b>\n"]
-    for opt in options:
-        months_label = f"{opt.months} {months_title(opt.months, short=False)}"
-        final_price = max(0, opt.price_rub - discount_rub) if discount_rub else opt.price_rub
-        if discount_rub and final_price != opt.price_rub:
-            lines.append(f"{months_label} — {opt.price_rub} ₽ → {final_price} ₽")
-        else:
-            lines.append(f"{months_label} — {opt.price_rub} ₽")
-    return "\n".join(lines)
 
 
 async def _notify_admins(bot: Bot, text: str, reply_markup=None) -> None:
@@ -219,10 +209,14 @@ async def _get_order_for_user(session, order_id: int, user: User) -> Order | Non
 
 @router.message(Command("buy"))
 async def cmd_buy(message: Message) -> None:
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=message.from_user)
+        sub = await get_or_create_subscription(session, user.id)
+        include_trial = not sub.trial_used
     await send_html_with_photo(
         message,
         _plans_menu_text(),
-        reply_markup=subscription_plans_kb(),
+        reply_markup=subscription_plans_kb(include_trial=include_trial),
         photo_path=settings.start_photo_path,
     )
 
@@ -242,10 +236,10 @@ async def cb_buy(call: CallbackQuery) -> None:
         traffic_limit = _traffic_limit_gb(sub.plan_code)
         await edit_message_text(
             call,
-            "⚙️ <b>Управление</b>\n\n"
+            "⚙️ <b>Управление подпиской</b>\n\n"
             f"<b>ID:</b> <code>{user.tg_id}</code>\n"
             f"<b>Баланс:</b> {user.balance_rub} ₽\n"
-            f"<b>Дата окончания подписки:</b> {fmt_dt(sub.expires_at)}\n"
+            f"<b>Подписка до:</b> {fmt_dt(sub.expires_at)}\n"
             f"<b>Трафик:</b> 0/{traffic_limit} GB\n"
             f"<b>Активных устройств:</b> {devices_active}\n\n"
             "Выберите действие 👇",
@@ -253,13 +247,19 @@ async def cb_buy(call: CallbackQuery) -> None:
         )
 
         return
-    await edit_message_text(call, _plans_menu_text(), reply_markup=subscription_plans_kb())
+    await edit_message_text(
+        call,
+        _plans_menu_text(),
+        reply_markup=subscription_plans_kb(include_trial=not sub.trial_used),
+    )
 
 @router.callback_query(F.data == "buy:plans")
 async def cb_buy_plans(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
-    await safe_answer_callback(call)
-    await edit_message_text(call, _plans_menu_text(), reply_markup=subscription_plans_kb())
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        sub = await get_or_create_subscription(session, user.id)
+    await edit_message_text(call, _plans_menu_text(), reply_markup=subscription_plans_kb(include_trial=not sub.trial_used))
 
 
 @router.callback_query(F.data == "buy:promo")
@@ -278,11 +278,19 @@ async def cb_plan_group(call: CallbackQuery, state: FSMContext) -> None:
     _, code = parts
     options = [opt for opt in plan_options(include_trial=False) if opt.code == code]
     if not options:
-        await edit_message_text(call, "Тариф не найден.", reply_markup=subscription_plans_kb())
+        async with session_scope() as session:
+            user = await ensure_user(session=session, tg_user=call.from_user)
+            sub = await get_or_create_subscription(session, user.id)
+        await edit_message_text(call, "Тариф не найден.", reply_markup=subscription_plans_kb(include_trial=not sub.trial_used))
         return
     data = await state.get_data()
     discount_rub = int(data.get("promo_discount_rub") or 0)
-    text = f"<b>{h(plan_title(code))}</b>\n\n{_periods_text(code, discount_rub)}"
+    text = (
+        f"ℹ️ <b>О тарифе {h(plan_title(code))}</b>\n"
+        f"{plan_details_text(code)}\n\n"
+        f"<b>{h(plan_title(code))}</b>\n"
+        "Выберите срок:"
+    )
     await edit_message_text(
         call,
         text,
@@ -318,7 +326,7 @@ async def cb_plan(call: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         if code == "trial":
             ok, reason = await activate_trial(session, user)
             if not ok:
-                await edit_message_text(call, f"⛔️ {h(reason)}", reply_markup=plans_kb(include_trial=False))
+                await edit_message_text(call, h(reason), reply_markup=plans_kb(include_trial=False))
                 return
 
             await edit_message_text(call, _plan_choice_text(code, months), reply_markup=trial_activated_kb())
@@ -793,6 +801,8 @@ async def stars_successful_payment(message: Message, bot: Bot) -> None:
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
         api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
     )
 
     async with session_scope() as session:

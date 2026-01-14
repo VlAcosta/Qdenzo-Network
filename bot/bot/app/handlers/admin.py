@@ -48,14 +48,8 @@ from ..services.payments import (
     is_cryptopay_paid,
     is_yookassa_paid,
 )
-from ..services.promos import (
-    create_promo,
-    delete_promo,
-    get_promo_by_code,
-    list_promos,
-    toggle_promo,
-    validate_promo_code,
-)
+from ..services.promos import create_promo, delete_promo, get_promo_by_code, list_promos, toggle_promo, validate_promo_code
+
 from ..services.subscriptions import get_or_create_subscription, is_active, now_utc
 from ..services.traffic import top_users_by_traffic, total_traffic
 from ..utils.telegram import edit_message_text, safe_answer_callback
@@ -106,6 +100,8 @@ def _marzban_client() -> MarzbanClient:
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
         api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
     )
 
 async def _render_promos(event: CallbackQuery | Message) -> None:
@@ -169,7 +165,6 @@ async def cb_admin_dashboard(call: CallbackQuery) -> None:
         f"👥 Пользователи: <b>{stats['total_users']}</b>\n"
         f"✅ Активные подписки: <b>{stats['active_subs']}</b>\n"
         f"🆕 Новые за 24ч: <b>{stats['new_users_24h']}</b>\n"
-        f"🧾 Pending: <b>{stats['pending_orders']}</b>\n"
         f"📱 Активные устройства: <b>{stats['active_devices']}</b>\n\n"
         f"💰 Выручка 24ч: <b>{stats['revenue_24h']} ₽</b>\n"
         f"💰 Выручка 30д: <b>{stats['revenue_30d']} ₽</b>\n\n"
@@ -227,8 +222,8 @@ async def msg_admin_promo_discount(message: Message, state: FSMContext) -> None:
     except ValueError:
         await message.answer("Введите скидку целым числом.")
         return
-    if discount < 0:
-        await message.answer("Скидка не может быть отрицательной.")
+    if discount <= 0:
+        await message.answer("Скидка должна быть больше 0.")
         return
     await state.update_data(discount=discount)
     await state.set_state(AdminStates.promo_max_uses)
@@ -954,15 +949,19 @@ async def cb_admin_quality(call: CallbackQuery) -> None:
 
     marz_status = "FAIL"
     happ_status = "FAIL"
-    yk_status = "FAIL"
+    payments_status = "FAIL"
     marz_latency_ms = None
     happ_latency_ms = None
 
     marz = _marzban_client()
     start = time.monotonic()
     try:
-        await marz.get_user("healthcheck")
-        marz_status = "OK"
+        system_info = await marz.get_system_info()
+        inbounds = await marz.list_inbounds()
+        details = []
+        details.append("system: ok" if system_info is not None else "system: n/a")
+        details.append("inbounds: ok" if inbounds is not None else "inbounds: n/a")
+        marz_status = "OK" + (f" ({', '.join(details)})" if details else "")
     except MarzbanError as exc:
         marz_status = f"FAIL ({exc})"
     except Exception as exc:
@@ -973,30 +972,35 @@ async def cb_admin_quality(call: CallbackQuery) -> None:
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.post("https://crypto.happ.su/api.php", json={"url": "https://example.com"})
-        if resp.status_code != 200:
-            happ_status = f"FAIL ({resp.status_code}: {resp.text[:120]})"
+        if not (settings.happ_proxy_api_base and settings.happ_proxy_provider_code and settings.happ_proxy_auth_key):
+            happ_status = "FAIL (не настроено)"
         else:
-            data = resp.json()
-            link = data.get("url") or data.get("result") or data.get("link")
-            if link and str(link).startswith("happ://"):
+            async with httpx.AsyncClient(base_url=settings.happ_proxy_api_base, timeout=5) as client:
+                resp = await client.get("/api/ping")
+            if resp.status_code == 200:
                 happ_status = "OK"
             else:
-                happ_status = f"FAIL (bad response: {str(link)[:80]})"
+                happ_status = f"FAIL ({resp.status_code}: {resp.text[:80]})"
     except Exception as exc:
         happ_status = f"FAIL ({exc})"
     finally:
         happ_latency_ms = int((time.monotonic() - start) * 1000)
 
-    if settings.yookassa_shop_id and settings.yookassa_secret_key:
-        yk_status = "OK (ключи заданы)"
+    payments_ok = any(
+        [
+            settings.payment_manual_enabled,
+            bool(settings.yookassa_shop_id and settings.yookassa_secret_key),
+            bool(settings.cryptopay_token),
+            settings.tg_stars_enabled,
+        ]
+    )
+    payments_status = "OK" if payments_ok else "FAIL (не настроено)"
 
     text = (
         "🧪 <b>Качество</b>\n\n"
         f"Marzban API: <b>{h(marz_status)}</b> ({marz_latency_ms} ms)\n"
-        f"Happ crypto: <b>{h(happ_status)}</b> ({happ_latency_ms} ms)\n"
-        f"YooKassa: <b>{h(yk_status)}</b>\n"
+        f"Happ proxy: <b>{h(happ_status)}</b> ({happ_latency_ms} ms)\n"
+        f"Платежи: <b>{h(payments_status)}</b>\n"
     )
     await edit_message_text(call, text, reply_markup=admin_back_kb())
     await safe_answer_callback(call)

@@ -53,11 +53,10 @@ async def cmd_start(message: Message) -> None:
         has_sub = is_active(sub)
     if ref is None and not user.onboarding_done:
         text = (
-            "Добро пожаловать в qdenzo network. 👋\n\n"
-            "Мы создаём частную сеть с акцентом\n"
-            "на стабильность, скорость и приватность\n"
-            "даже при сетевых ограничениях.\n\n"
-            "Подключение занимает меньше минуты.\n"
+            "Добро пожаловать в <b>Qdenzo Network</b> 👋\n\n"
+            "Это частная сеть для стабильного и безопасного доступа\n"
+            "к интернету с быстрым подключением и понятными настройками.\n\n"
+            "Запуск займёт меньше минуты.\n"
             "Нажмите «Старт», чтобы продолжить."
         )
         photo_path = settings.start_photo_path
@@ -115,12 +114,10 @@ async def cmd_menu(message: Message) -> None:
 async def cb_onboarding_step2(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
     text = (
-        "Вы находитесь в qdenzo network.\n\n"
-        "Это частная сеть для стабильного и защищённого\n"
-        "доступа к интернету без сложных настроек.\n\n"
-        "Подключение происходит в несколько шагов.\n"
-        "Вы сможете проверить работу сервиса\n"
-        "перед выбором тарифа."
+        "Qdenzo Network — частная сеть для стабильного доступа\n"
+        "без лишних настроек и сложных инструкций.\n\n"
+        "Подключение занимает пару шагов,\n"
+        "а перед оплатой можно оценить качество сервиса."
     )
     await edit_message_text(call, text, reply_markup=onboarding_continue_kb())
 
@@ -128,13 +125,17 @@ async def cb_onboarding_step2(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "onb:3")
 async def cb_onboarding_step3(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        sub = await get_or_create_subscription(session, user.id)
+        include_trial = not sub.trial_used
     text = (
-        "Вы можете попробовать qdenzo network бесплатно\n"
-        "или перейти сразу в главное меню сервиса.\n\n"
-        "Бесплатный доступ поможет оценить\n"
+        "Вы можете попробовать сервис бесплатно\n"
+        "или перейти сразу в главное меню.\n\n"
+        "Бесплатный период поможет оценить\n"
         "стабильность и скорость подключения."
     )
-    await edit_message_text(call, text, reply_markup=onboarding_finish_kb())
+    await edit_message_text(call, text, reply_markup=onboarding_finish_kb(include_trial=include_trial))
     async with session_scope() as session:
         user = await ensure_user(session=session, tg_user=call.from_user)
         user.onboarding_done = True

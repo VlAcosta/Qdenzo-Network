@@ -96,6 +96,7 @@ class CryptoPayClient:
             "createInvoice",
             req,
         )
+        logger.info("CryptoPay invoice created amount={} asset={}", amount, asset)
         return CryptoPayInvoice(
             invoice_id=int(result["invoice_id"]),
             status=str(result.get("status", "")),

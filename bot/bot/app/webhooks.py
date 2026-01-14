@@ -29,6 +29,8 @@ def _marzban_client() -> MarzbanClient:
         password=settings.marzban_password,
         verify_ssl=settings.marzban_verify_ssl,
         api_prefix=settings.marzban_api_prefix,
+        default_inbounds={settings.marzban_proxy_type: [settings.marzban_inbound_tag]},
+        default_proxies={settings.marzban_proxy_type: {"flow": settings.reality_flow}},
     )
 
 
