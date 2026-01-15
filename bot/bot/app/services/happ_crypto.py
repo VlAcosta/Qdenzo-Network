@@ -63,11 +63,11 @@ async def encrypt_subscription_url(url: str) -> str | None:
                 _cache_set(url, crypt, _DEFAULT_TTL_SECONDS)
                 return crypt
             except (httpx.RequestError, ValueError, HappCryptoError) as exc:
-                logger.warning("Happ crypto request failed (attempt %s/%s): %s", attempt, _MAX_RETRIES, exc)
+                logger.warning("Happ crypto request failed (attempt {}/{}): {}", attempt, _MAX_RETRIES, exc)
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_BACKOFF * attempt)
                     continue
                 return None
     except Exception as exc:
-        logger.exception("Unexpected happ crypto failure: %s", exc)
+        logger.exception("Unexpected happ crypto failure: {}", exc)
         return None

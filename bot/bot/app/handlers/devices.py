@@ -12,10 +12,13 @@ from aiogram.types import (
 )
 
 from ..config import settings
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from ..db import session_scope
 from ..keyboards.devices import (
     device_delete_confirm_kb,
     device_menu_kb,
+    device_quick_type_kb,
     device_type_kb,
     devices_list_kb,
 )
@@ -23,10 +26,12 @@ from ..keyboards.nav import nav_kb
 from loguru import logger
 
 from ..marzban.client import MarzbanClient, MarzbanError
+from ..models import Device
 from ..services.devices import (
     DEVICE_TYPES,
     count_active_devices,
     create_device,
+    display_label,
     get_device,
     get_device_connection_links,
     list_devices,
@@ -37,6 +42,7 @@ from ..services.users import ensure_user
 from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
 from ..services.happ_connect import build_happ_links
 from ..utils.text import h
+from ..utils.urls import is_http_url
 from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 
 router = Router()
@@ -89,16 +95,6 @@ async def _resolve_device_urls(device) -> tuple[str | None, str | None]:
     return link, subscription_url
 
 
-def _pick_connection_url(link: str | None, subscription_url: str | None) -> str | None:
-    if settings.marzban_link_mode == "link":
-        return link
-    if settings.marzban_link_mode == "subscription":
-        return subscription_url
-    return subscription_url or link
-
-
-
-
 async def _ensure_install_code(session, device, *, install_limit: int) -> str | None:
     cfg = _happ_proxy_cfg()
     if not cfg:
@@ -121,11 +117,11 @@ async def _build_connect_links(
     device,
     *,
     install_limit: int,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     link, subscription_url = await _resolve_device_urls(device)
-    base_url = _pick_connection_url(link, subscription_url)
+    base_url = subscription_url if is_http_url(subscription_url) else None
     if not base_url:
-        return None, None
+        return None, None, link
     try:
         install_code = await _ensure_install_code(session, device, install_limit=install_limit)
     except Exception:
@@ -135,32 +131,46 @@ async def _build_connect_links(
         _, crypt_url = await build_happ_links(limited_url)
     except Exception:
         crypt_url = None
-    return limited_url, crypt_url
+    return limited_url, crypt_url, link
 
 
-async def _build_happ_connect_links(session, device, *, install_limit: int, marz: MarzbanClient) -> tuple[str | None, str | None]:
+async def _build_happ_connect_links(
+    session,
+    device,
+    *,
+    install_limit: int,
+    marz: MarzbanClient,
+) -> tuple[str | None, str | None, str | None]:
     link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
-    base_url = _pick_connection_url(link, subscription_url)
+    base_url = subscription_url if is_http_url(subscription_url) else None
     if not base_url:
-        return None, None
+        return None, None, link
     try:
         install_code = await _ensure_install_code(session, device, install_limit=install_limit)
     except Exception:
         install_code = None
     limited_url = _with_install_id(base_url, install_code) if install_code else base_url
     try:
-        return await build_happ_links(limited_url)
+        plain_url, crypt_url = await build_happ_links(limited_url)
+        return plain_url, crypt_url, link
     except Exception:
-        return limited_url, None
+        return limited_url, None, link
 
-
-def happ_connect_kb(*, plain_url: str, crypt_url: str | None) -> InlineKeyboardMarkup:
+def happ_connect_kb(
+    *,
+    plain_url: str | None,
+    crypt_url: str | None,
+    device_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """Standard one-tap Happ connect keyboard (Variant B)."""
     rows: list[list[InlineKeyboardButton]] = []
     if crypt_url:
         rows.append([InlineKeyboardButton(text="🚀 Добавить в Happ", url=crypt_url)])
     rows.append([InlineKeyboardButton(text="⬇️ Установить Happ", url=settings.happ_url or HAPP_URL_DEFAULT)])
-    rows.append([InlineKeyboardButton(text="🔗 Обычная ссылка", url=plain_url)])
+    if is_http_url(plain_url):
+        rows.append([InlineKeyboardButton(text="🔗 Обычная ссылка", url=plain_url)])
+    elif device_id is not None:
+        rows.append([InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"dev:copy_link:{device_id}")])
     rows.append([InlineKeyboardButton(text="📄 Инструкция", callback_data="happ:help")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -168,10 +178,10 @@ def happ_connect_kb(*, plain_url: str, crypt_url: str | None) -> InlineKeyboardM
 def _connect_kb(
     *,
     device_id: int,
-    plain_url: str,
+    plain_url: str | None,
     crypt_url: str | None,
 ) -> InlineKeyboardMarkup:
-    kb = happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url)
+    kb = happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url, device_id=device_id)
     rows = list(kb.inline_keyboard)
     rows.append([
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
@@ -184,7 +194,10 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
     if isinstance(call_or_message, CallbackQuery):
         await safe_answer_callback(call_or_message)
     async with session_scope() as session:
-        device = await get_device(session, device_id)
+        result = await session.execute(
+            select(Device).options(selectinload(Device.user)).where(Device.id == device_id)
+        )
+        device = result.scalar_one_or_none()
         if not device:
             if isinstance(call_or_message, CallbackQuery):
                 await safe_answer_callback(call_or_message, "Устройство не найдено", show_alert=True)
@@ -206,13 +219,13 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
                 )
             return
         sub = await get_or_create_subscription(session, device.user_id)
-        limited_url, crypt_url = await _build_connect_links(
+        limited_url, crypt_url, vless_link = await _build_connect_links(
             session,
             device,
             install_limit=sub.devices_limit,
         )
 
-    if not limited_url:
+    if not limited_url and not vless_link:
         text = "Сервис временно отвечает медленно, попробуйте ещё раз."
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:connect:{device_id}")],
@@ -237,6 +250,8 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
         "🚀 <b>Подключить устройство</b>\n\n"
         "Выберите способ подключения 👇"
     )
+    if vless_link:
+        text += f"\n\n<pre><code>{h(vless_link)}</code></pre>"
     if crypt_url is None:
         text += "\n\n⚠️ Шифрованный импорт временно недоступен — используйте обычную ссылку."
     kb = _connect_kb(device_id=device_id, plain_url=limited_url, crypt_url=crypt_url)
@@ -262,10 +277,18 @@ async def _show_devices(call_or_message, *, user_id: int) -> None:
         sub = await get_or_create_subscription(session, user_id)
         devices = await list_devices(session, user_id)
 
-    can_add = len([d for d in devices if d.status != "deleted"]) < sub.devices_limit
+    active_devices = [d for d in devices if d.status != "deleted"]
+    can_add = len(active_devices) < sub.devices_limit
+    lines = [
+        f"• <b>{h(display_label(d))}</b> — {h(_type_title(d.device_type))}"
+        for d in active_devices
+    ]
     text = (
         "📱 <b>Ваши устройства</b>\n\n"
-        f"Лимит по тарифу: <b>{sub.devices_limit}</b>\n"
+        f"Лимит по тарифу: <b>{sub.devices_limit}</b>\n\n"
+        "<b>Список устройств:</b>\n"
+        + ("\n".join(lines) if lines else "—")
+        + "\n\n"
         "Выберите устройство или добавьте новое."
     )
     kb = devices_list_kb(devices, can_add=can_add)
@@ -311,7 +334,7 @@ async def cb_device_view(call: CallbackQuery) -> None:
     status = "✅ активно" if device.status == "active" else ("❄️ заморожено" if device.status == "disabled" else "🗑 удалено")
     text = (
         "📲 <b>Устройство</b>\n\n"
-        f"Название: <b>{h(device.label)}</b>\n"
+        f"Название: <b>{h(display_label(device))}</b>\n"
         f"Тип: <b>{h(_type_title(device.device_type))}</b>\n"
         f"Статус: <b>{status}</b>\n\n"
         "Действия ниже:"
@@ -346,11 +369,28 @@ async def cb_add_device(call: CallbackQuery, state: FSMContext) -> None:
         await cb_devices(call)
         return
 
+    hint = ""
+    if user.last_device_type in DEVICE_TYPES:
+        hint = f"\nПо умолчанию: {_type_title(user.last_device_type)}."
 
     await state.clear()
     await edit_message_text(
         call,
-        "➕ <b>Добавить устройство</b>\n\nВыберите тип устройства:",
+        "➕ <b>Добавить устройство</b>\n\n"
+        "Мы предложим имя автоматически — его можно изменить позже.\n"
+        "Выберите тип устройства:"
+        f"{hint}",
+        reply_markup=device_quick_type_kb(user.last_device_type),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "dev:type:more")
+async def cb_device_type_more(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    await edit_message_text(
+        call,
+        "Выберите тип устройства:",
         reply_markup=device_type_kb(),
     )
     await call.answer()
@@ -387,7 +427,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
                 user=user,
                 sub=sub,
                 device_type=device_type,
-                label=_type_title(device_type),
+                label=user.last_device_label or "Моё устройство",
             )
         except MarzbanError as exc:
             logger.exception(
@@ -404,7 +444,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
             )
             await call.answer()
             return
-        plain_url, crypt_url = await _build_happ_connect_links(
+        plain_url, crypt_url, vless_link = await _build_happ_connect_links(
             session,
             device,
             install_limit=sub.devices_limit,
@@ -418,7 +458,7 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         f"✅ Устройство <b>{h(device.label)}</b> добавлено!\n\n"
         "Теперь подключите его 👇",
     )
-    if not plain_url:
+    if not plain_url and not vless_link:
         await call.message.answer(
             "Сервис временно отвечает медленно, попробуйте ещё раз."
         )
@@ -429,8 +469,13 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
     await call.message.answer(
         "Устройство успешно добавлено ✅\n\n"
         "Нажмите кнопку ниже — конфигурация будет\n"
-        "импортирована в Happ автоматически.",
-        reply_markup=happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url),
+        "импортирована в Happ автоматически."
+    )
+    if vless_link:
+        message_text += f"\n\n<pre><code>{h(vless_link)}</code></pre>"
+    await call.message.answer(
+        message_text,
+        reply_markup=happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url, device_id=device.id),
     )
     await call.answer()
 
@@ -461,8 +506,9 @@ async def msg_rename_device(message: Message, state: FSMContext) -> None:
     device_id = int(data.get("device_id"))
 
     async with session_scope() as session:
-        device = await get_device(session, device_id)
-        if not device or device.user.tg_id != message.from_user.id:
+        user = await ensure_user(session=session, tg_user=message.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
             await message.answer("Устройство не найдено.")
             await state.clear()
             return
@@ -498,10 +544,12 @@ async def cb_device_cfg(call: CallbackQuery) -> None:
         await marz.close()
 
     rows = []
-    if link:
+    if is_http_url(link):
         rows.append([InlineKeyboardButton(text="🔗 Открыть / Импортировать", url=link)])
-    if subscription_url:
+    if is_http_url(subscription_url):
         rows.append([InlineKeyboardButton(text="📥 Подписка (subscription)", url=subscription_url)])
+    if link and not is_http_url(link):
+        rows.append([InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"dev:copy_link:{device_id}")])
     if not link and not subscription_url:
         rows.append([InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:cfg:{device_id}")])
         rows.append([
@@ -539,14 +587,15 @@ async def cb_device_show_link(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
     device_id = int(call.data.split(":")[-1])
     async with session_scope() as session:
-        device = await get_device(session, device_id)
-        if not device or device.user.tg_id != call.from_user.id:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
             await call.answer("Устройство не найдено", show_alert=True)
             return
         sub = await get_or_create_subscription(session, device.user_id)
-        limited_url, _ = await _build_connect_links(session, device, install_limit=sub.devices_limit)
+        limited_url, _, vless_link = await _build_connect_links(session, device, install_limit=sub.devices_limit)
 
-    if not limited_url:
+    if not limited_url and not vless_link:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"dev:show_link:{device_id}")],
             [
@@ -556,6 +605,22 @@ async def cb_device_show_link(call: CallbackQuery) -> None:
         ])
         await edit_message_text(call, "Сервис временно отвечает медленно, попробуйте ещё раз.", reply_markup=kb)
         return
+    
+    if vless_link and not limited_url:
+        text = (
+            "🔗 <b>Обычная ссылка</b>\n\n"
+            "Скопируйте и импортируйте в клиент вручную:\n\n"
+            f"<pre><code>{h(vless_link)}</code></pre>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"dev:copy_link:{device_id}"),
+        ], [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+        ]])
+        await edit_message_text(call, text, reply_markup=kb)
+        return
+
 
     text = (
         "🔗 <b>Обычная ссылка</b>\n\n"
@@ -568,6 +633,35 @@ async def cb_device_show_link(call: CallbackQuery) -> None:
     ]])
     await edit_message_text(call, text, reply_markup=kb)
     await call.answer()
+
+@router.callback_query(F.data.startswith("dev:copy_link:"))
+async def cb_device_copy_link(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    device_id = int(call.data.split(":")[-1])
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
+            await call.answer("Устройство не найдено", show_alert=True)
+            return
+    marz = _marzban_client()
+    try:
+        link, subscription_url = await get_device_connection_links(marz, device.marzban_username)
+    finally:
+        await marz.close()
+    vless_link = link if link and not is_http_url(link) else None
+    if not vless_link:
+        await call.answer("Ссылка пока недоступна", show_alert=True)
+        return
+    text = (
+        "📋 <b>Ссылка для подключения</b>\n\n"
+        "Нажмите и удерживайте, чтобы скопировать:\n\n"
+        f"<pre><code>{h(vless_link)}</code></pre>"
+    )
+    await call.message.answer(text)
+    await call.answer()
+
+
 
 
 @router.callback_query(F.data.startswith("dev:instruction:"))

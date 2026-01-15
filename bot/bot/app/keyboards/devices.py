@@ -3,7 +3,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import Device
-from ..services.devices import DEVICE_TYPES
+from ..services.devices import DEVICE_TYPES, display_label
 
 
 def _type_title(device_type: str) -> str:
@@ -17,7 +17,7 @@ def devices_list_kb(devices: list[Device], *, can_add: bool) -> InlineKeyboardMa
         if d.status == "deleted":
             continue
         status = "✅" if d.status == "active" else "❄️"
-        title = f"{status} {_type_title(d.device_type)} {d.label or ''}".strip()
+        title = f"{status} {display_label(d)}"
         rows.append([InlineKeyboardButton(text=title, callback_data=f"dev:view:{d.id}")])
 
     if can_add:
@@ -50,6 +50,22 @@ def device_type_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
         ],
     ])
+
+def device_quick_type_kb(last_type: str | None = None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if last_type and last_type in DEVICE_TYPES:
+        rows.append([InlineKeyboardButton(text=f"✅ Использовать: {_type_title(last_type)}", callback_data=f"dev:type:{last_type}")])
+    rows.append([
+        InlineKeyboardButton(text="📱 Это телефон", callback_data="dev:type:phone"),
+        InlineKeyboardButton(text="💻 Это ПК", callback_data="dev:type:pc"),
+    ])
+    rows.append([InlineKeyboardButton(text="➕ Другие устройства", callback_data="dev:type:more")])
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="devices"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 def device_happ_kb(*, happ_url: str, continue_cb: str, back_cb: str) -> InlineKeyboardMarkup:

@@ -39,11 +39,11 @@ async def build_happ_links(plain_url: str) -> tuple[str, str | None]:
     try:
         crypt_url = await encrypt_subscription_url(plain_url)
     except Exception as exc:
-        logger.exception("Happ encryption failed for %s: %s", plain_url, exc)
+        logger.exception("Happ encryption failed for {}: {}", plain_url, exc)
 
     if not crypt_url:
-        logger.warning("Happ encryption unavailable, falling back to plain link for %s", plain_url)
-
+        logger.warning("Happ encryption unavailable, falling back to plain link for {}", plain_url)
+        
     result = (plain_url, crypt_url)
     _cache_set(plain_url, result, _CACHE_TTL_SECONDS)
     return result

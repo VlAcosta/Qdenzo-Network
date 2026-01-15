@@ -12,6 +12,7 @@ from ..config import settings
 from loguru import logger
 
 from ..marzban.client import MarzbanClient, MarzbanError
+from ..utils.urls import make_absolute_url
 from ..models import Device, Subscription, User
 from .subscriptions import is_active, now_utc
 
@@ -25,8 +26,31 @@ DEVICE_TYPES = {
     'other': '🔧 Другое',
 }
 
+DEVICE_TYPE_LABELS = {
+    'phone': 'Телефон',
+    'pc': 'ПК',
+    'tv': 'ТВ',
+    'tablet': 'Планшет',
+    'router': 'Роутер',
+    'other': 'Устройство',
+}
+
+
 def type_title(device_type: str) -> str:
     return DEVICE_TYPES.get(device_type, device_type)
+
+
+def _default_label(device_type: str, *, index: int) -> str:
+    base = DEVICE_TYPE_LABELS.get(device_type, "Устройство")
+    return f"{base} {index}"
+
+
+def display_label(device: Device) -> str:
+    label = (device.label or "").strip()
+    if label:
+        return label
+    return _default_label(device.device_type, index=device.slot or 1)
+
 
 def _marzban_username(tg_id: int, slot: int) -> str:
     # Unique per device
@@ -68,7 +92,7 @@ async def create_device(
     user: User,
     sub: Subscription,
     device_type: str,
-    label: str,
+    label: str | None,
 ) -> Device:
     devices = await list_devices(session, user.id)
     slot = await next_free_slot(devices, sub.devices_limit)
@@ -76,6 +100,7 @@ async def create_device(
         raise ValueError('devices_limit_reached')
     existing_device = next((d for d in devices if d.slot == slot), None)
     m_username = _marzban_username(user.tg_id, slot)
+    label = (label or "").strip() or _default_label(device_type, index=slot)
     note = f"tg_id={user.tg_id};device_slot={slot};label={label}"
 
     expire_ts = 0
@@ -235,6 +260,7 @@ async def get_device_connection_links(marz: MarzbanClient, marzban_username: str
         return None, None
     links = u.get('links') or []
     sub_url = u.get('subscription_url')
+    sub_url = make_absolute_url(u.get('subscription_url'))
     link = links[0] if links else None
     return link, sub_url
 
