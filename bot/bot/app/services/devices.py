@@ -36,6 +36,15 @@ DEVICE_TYPE_LABELS = {
 }
 
 
+DEVICE_TYPE_PLATFORM = {
+    'phone': 'android',
+    'pc': 'windows',
+    'tv': 'android',
+    'tablet': 'android',
+    'router': 'linux',
+    'other': 'android',
+}
+
 def type_title(device_type: str) -> str:
     return DEVICE_TYPES.get(device_type, device_type)
 
@@ -45,11 +54,26 @@ def _default_label(device_type: str, *, index: int) -> str:
     return f"{base} {index}"
 
 
+def _normalize_label(label: str | None, *, device_type: str, slot: int) -> str:
+    base = DEVICE_TYPE_LABELS.get(device_type, "Устройство")
+    default_label = _default_label(device_type, index=slot)
+    clean = (label or "").strip()
+    if not clean:
+        return default_label
+    if clean in {base, "Моё устройство"}:
+        return default_label
+    return clean
+
+
 def display_label(device: Device) -> str:
     label = (device.label or "").strip()
     if label:
         return label
     return _default_label(device.device_type, index=device.slot or 1)
+
+def default_platform(device_type: str) -> str | None:
+    return DEVICE_TYPE_PLATFORM.get(device_type)
+
 
 
 def _marzban_username(tg_id: int, slot: int) -> str:
@@ -100,7 +124,7 @@ async def create_device(
         raise ValueError('devices_limit_reached')
     existing_device = next((d for d in devices if d.slot == slot), None)
     m_username = _marzban_username(user.tg_id, slot)
-    label = (label or "").strip() or _default_label(device_type, index=slot)
+    label = _normalize_label(label, device_type=device_type, slot=slot)
     note = f"tg_id={user.tg_id};device_slot={slot};label={label}"
 
     expire_ts = 0
@@ -158,6 +182,7 @@ async def create_device(
     user.last_device_id = device.id
     user.last_device_type = device.device_type
     user.last_device_label = device.label
+    user.last_device_platform = default_platform(device.device_type) or user.last_device_platform
     session.add(user)
     await session.commit()
 

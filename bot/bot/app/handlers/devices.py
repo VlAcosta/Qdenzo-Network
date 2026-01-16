@@ -42,7 +42,8 @@ from ..services.users import ensure_user
 from ..services.happ_proxy import HappProxyConfig, _with_install_id, add_install_code
 from ..services.happ_connect import build_happ_links
 from ..utils.text import h
-from ..utils.urls import is_http_url
+from ..utils.urls import build_public_url, is_http_url, sanitize_inline_url
+from ..utils.connect import create_connect_token
 from ..utils.telegram import edit_message_text, safe_answer_callback, send_html_with_photo
 
 router = Router()
@@ -72,6 +73,92 @@ def _connect_instruction_text() -> str:
         "3) Подтвердите импорт и дождитесь активации.\n\n"
         "Если импорт не сработал — используйте обычную ссылку и выберите профиль вручную."
     )
+
+def _platform_title(code: str) -> str:
+    return {
+        "android": "Android",
+        "ios": "iOS",
+        "windows": "Windows",
+        "macos": "macOS",
+        "linux": "Linux",
+    }.get(code, "Устройство")
+
+
+def _platform_instructions(code: str) -> str:
+    base = (
+        "1) Откройте приложение для подключения.\n"
+        "2) Импортируйте ссылку или вставьте конфиг вручную.\n"
+        "3) Выберите профиль и нажмите «Подключить».\n"
+    )
+    if code == "ios":
+        return (
+            "📄 <b>Инструкция для iOS</b>\n\n"
+            "1) Установите Happ или совместимый клиент.\n"
+            "2) Нажмите «Импортировать» и вставьте ссылку.\n"
+            "3) Подтвердите добавление профиля.\n\n"
+            + base
+        )
+    if code == "android":
+        return (
+            "📄 <b>Инструкция для Android</b>\n\n"
+            "1) Установите Happ или другой VLESS-клиент.\n"
+            "2) Импортируйте ссылку или вставьте конфиг.\n"
+            "3) Сохраните профиль.\n\n"
+            + base
+        )
+    if code == "windows":
+        return (
+            "📄 <b>Инструкция для Windows</b>\n\n"
+            "1) Установите клиент (Happ или другой VLESS).\n"
+            "2) Импортируйте ссылку или добавьте конфиг.\n"
+            "3) Включите соединение.\n\n"
+            + base
+        )
+    if code == "macos":
+        return (
+            "📄 <b>Инструкция для macOS</b>\n\n"
+            "1) Установите клиент (Happ или другой VLESS).\n"
+            "2) Импортируйте ссылку или вставьте конфиг.\n"
+            "3) Запустите подключение.\n\n"
+            + base
+        )
+    if code == "linux":
+        return (
+            "📄 <b>Инструкция для Linux</b>\n\n"
+            "1) Установите клиент VLESS.\n"
+            "2) Импортируйте ссылку или добавьте конфиг.\n"
+            "3) Подключитесь к сети.\n\n"
+            + base
+        )
+    return "📄 <b>Инструкция</b>\n\n" + base
+
+
+def _connect_page_path(device: Device) -> str:
+    token = create_connect_token(device_id=device.id, user_id=device.user_id)
+    return f"/connect/{token}"
+
+
+def _connect_page_url(device: Device) -> str | None:
+    return build_public_url(_connect_page_path(device))
+
+
+def _connect_actions_kb(*, device: Device, has_plain_link: bool, platform: str | None) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    connect_url = sanitize_inline_url(_connect_page_url(device))
+    if connect_url:
+        rows.append([InlineKeyboardButton(text="🚀 Подключить (рекомендовано)", url=connect_url)])
+    else:
+        rows.append([InlineKeyboardButton(text="🚀 Подключить (рекомендовано)", callback_data=f"dev:connect_link:{device.id}")])
+    rows.append([InlineKeyboardButton(text="🔗 Обычная ссылка", callback_data=f"dev:show_link:{device.id}")])
+    if platform:
+        rows.append([InlineKeyboardButton(text=f"📄 Инструкция ({_platform_title(platform)})", callback_data=f"dev:instruction:{device.id}:{platform}")])
+    else:
+        rows.append([InlineKeyboardButton(text="📄 Инструкция", callback_data=f"dev:instruction:{device.id}:choose")])
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device.id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _happ_proxy_cfg() -> HappProxyConfig | None:
@@ -156,38 +243,7 @@ async def _build_happ_connect_links(
     except Exception:
         return limited_url, None, link
 
-def happ_connect_kb(
-    *,
-    plain_url: str | None,
-    crypt_url: str | None,
-    device_id: int | None = None,
-) -> InlineKeyboardMarkup:
-    """Standard one-tap Happ connect keyboard (Variant B)."""
-    rows: list[list[InlineKeyboardButton]] = []
-    if crypt_url:
-        rows.append([InlineKeyboardButton(text="🚀 Добавить в Happ", url=crypt_url)])
-    rows.append([InlineKeyboardButton(text="⬇️ Установить Happ", url=settings.happ_url or HAPP_URL_DEFAULT)])
-    if is_http_url(plain_url):
-        rows.append([InlineKeyboardButton(text="🔗 Обычная ссылка", url=plain_url)])
-    elif device_id is not None:
-        rows.append([InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"dev:copy_link:{device_id}")])
-    rows.append([InlineKeyboardButton(text="📄 Инструкция", callback_data="happ:help")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-def _connect_kb(
-    *,
-    device_id: int,
-    plain_url: str | None,
-    crypt_url: str | None,
-) -> InlineKeyboardMarkup:
-    kb = happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url, device_id=device_id)
-    rows = list(kb.inline_keyboard)
-    rows.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:view:{device_id}"),
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
@@ -247,14 +303,17 @@ async def _show_connect_screen(call_or_message, *, device_id: int) -> None:
         return
 
     text = (
-        "🚀 <b>Подключить устройство</b>\n\n"
-        "Выберите способ подключения 👇"
+        "🚀 <b>Подключение устройства</b>\n\n"
+        "Рекомендуем использовать быстрый мастер — он подберёт шаги под ваше устройство.\n"
+        "Выберите способ ниже 👇"
     )
+    text += f"\n\n<b>Ссылка мастера:</b> <code>{h(_connect_page_path(device))}</code>"
     if vless_link:
         text += f"\n\n<pre><code>{h(vless_link)}</code></pre>"
     if crypt_url is None:
         text += "\n\n⚠️ Шифрованный импорт временно недоступен — используйте обычную ссылку."
-    kb = _connect_kb(device_id=device_id, plain_url=limited_url, crypt_url=crypt_url)
+    platform = device.user.last_device_platform
+    kb = _connect_actions_kb(device=device, has_plain_link=bool(limited_url), platform=platform)
     if isinstance(call_or_message, CallbackQuery):
         await edit_message_text(call_or_message, text, reply_markup=kb)
         await safe_answer_callback(call_or_message,)
@@ -421,13 +480,14 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
     marz = _marzban_client()
     try:
         try:
+            label = user.last_device_label if user.last_device_type == device_type else None
             device = await create_device(
                 session=session,
                 marz=marz,
                 user=user,
                 sub=sub,
                 device_type=device_type,
-                label=user.last_device_label or "Моё устройство",
+                label=label,
             )
         except MarzbanError as exc:
             logger.exception(
@@ -475,7 +535,11 @@ async def cb_choose_type(call: CallbackQuery, state: FSMContext) -> None:
         message_text += f"\n\n<pre><code>{h(vless_link)}</code></pre>"
     await call.message.answer(
         message_text,
-        reply_markup=happ_connect_kb(plain_url=plain_url, crypt_url=crypt_url, device_id=device.id),
+        reply_markup=_connect_actions_kb(
+            device=device,
+            has_plain_link=bool(plain_url),
+            platform=user.last_device_platform,
+        ),
     )
     await call.answer()
 
@@ -581,6 +645,28 @@ async def cb_device_connect(call: CallbackQuery) -> None:
     device_id = int(call.data.split(":")[-1])
     await _show_connect_screen(call, device_id=device_id)
 
+@router.callback_query(F.data.startswith("dev:connect_link:"))
+async def cb_device_connect_link(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    device_id = int(call.data.split(":")[-1])
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        device = await get_device(session, device_id, user_id=user.id)
+        if not device:
+            await call.answer("Устройство не найдено", show_alert=True)
+            return
+    connect_path = _connect_page_path(device)
+    text = (
+        "🔗 <b>Ссылка на мастер подключения</b>\n\n"
+        "Скопируйте и откройте в браузере:\n\n"
+        f"<pre><code>{h(connect_path)}</code></pre>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ]])
+    await edit_message_text(call, text, reply_markup=kb)
+    await call.answer()
 
 @router.callback_query(F.data.startswith("dev:show_link:"))
 async def cb_device_show_link(call: CallbackQuery) -> None:
@@ -661,14 +747,68 @@ async def cb_device_copy_link(call: CallbackQuery) -> None:
     await call.message.answer(text)
     await call.answer()
 
+def _platform_choice_kb(device_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="Android", callback_data=f"dev:set_platform:{device_id}:android"),
+            InlineKeyboardButton(text="iOS", callback_data=f"dev:set_platform:{device_id}:ios"),
+        ],
+        [
+            InlineKeyboardButton(text="Windows", callback_data=f"dev:set_platform:{device_id}:windows"),
+            InlineKeyboardButton(text="macOS", callback_data=f"dev:set_platform:{device_id}:macos"),
+        ],
+        [
+            InlineKeyboardButton(text="Linux", callback_data=f"dev:set_platform:{device_id}:linux"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 
 @router.callback_query(F.data.startswith("dev:instruction:"))
 async def cb_device_instruction(call: CallbackQuery) -> None:
     await safe_answer_callback(call)
-    device_id = int(call.data.split(":")[-1])
-    text = _connect_instruction_text()
+    parts = call.data.split(":")
+    if len(parts) < 3:
+        return
+    _, _, device_id_s, *rest = parts
+    device_id = int(device_id_s)
+    platform = rest[0] if rest else None
+    if platform == "choose" or not platform:
+        await edit_message_text(
+            call,
+            "Выберите платформу, чтобы показать инструкцию:",
+            reply_markup=_platform_choice_kb(device_id),
+        )
+        await call.answer()
+        return
+    text = _platform_instructions(platform)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),
+    ]])
+    await edit_message_text(call, text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("dev:set_platform:"))
+async def cb_set_platform(call: CallbackQuery) -> None:
+    await safe_answer_callback(call)
+    parts = call.data.split(":")
+    if len(parts) != 4:
+        return
+    _, _, device_id_s, platform = parts
+    device_id = int(device_id_s)
+    async with session_scope() as session:
+        user = await ensure_user(session=session, tg_user=call.from_user)
+        user.last_device_platform = platform
+        session.add(user)
+        await session.commit()
+    text = _platform_instructions(platform)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"dev:connect:{device_id}"),
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="back"),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-
+from ..utils.urls import sanitize_inline_url
 
 def order_payment_kb(
     order_id: int,
@@ -21,16 +21,22 @@ def order_payment_kb(
     rows: list[list[InlineKeyboardButton]] = []
 
     if pay_url:
-        rows.append([InlineKeyboardButton(text="Перейти к оплате", url=pay_url)])
+        safe_url = sanitize_inline_url(pay_url)
+        if safe_url:
+            rows.append([InlineKeyboardButton(text="Перейти к оплате", url=safe_url)])
     else:
         if yookassa_enabled:
             rows.append([InlineKeyboardButton(text="💳 Карта/СБП", callback_data=f"pay:yookassa:{order_id}")])
         elif yookassa_url:
-            rows.append([InlineKeyboardButton(text="💳 Карта/СБП", url=yookassa_url)])
+            safe_url = sanitize_inline_url(yookassa_url)
+            if safe_url:
+                rows.append([InlineKeyboardButton(text="💳 Карта/СБП", url=safe_url)])
         if crypto_enabled:
             rows.append([InlineKeyboardButton(text="🪙 Крипта", callback_data=f"pay:cryptopay:{order_id}")])
         elif crypto_url:
-            rows.append([InlineKeyboardButton(text="🪙 Крипта", url=crypto_url)])
+            safe_url = sanitize_inline_url(crypto_url)
+            if safe_url:
+                rows.append([InlineKeyboardButton(text="🪙 Крипта", url=safe_url)])
 
     if stars_enabled:
         rows.append([InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"stars:{order_id}")])

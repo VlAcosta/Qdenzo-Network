@@ -29,6 +29,7 @@ async def run_migrations(engine: AsyncEngine) -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_id INTEGER NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_type VARCHAR(16) NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_label VARCHAR(64) NULL;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_platform VARCHAR(16) NULL;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_done BOOLEAN NOT NULL DEFAULT FALSE;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS balance_rub INTEGER NOT NULL DEFAULT 0;",
 

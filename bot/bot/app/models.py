@@ -41,6 +41,7 @@ class User(Base):
     last_device_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_device_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_device_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_device_platform: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 

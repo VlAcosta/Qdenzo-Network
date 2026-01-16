@@ -4,6 +4,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import Device
 from ..services.devices import DEVICE_TYPES, display_label
+from ..utils.urls import sanitize_inline_url
 
 
 def _type_title(device_type: str) -> str:
@@ -72,6 +73,10 @@ def device_happ_kb(*, happ_url: str, continue_cb: str, back_cb: str) -> InlineKe
     """
     Экран "сначала открываем приложение/скрипт (Happ)".
     """
+    safe_url = sanitize_inline_url(happ_url)
+    rows = []
+    if safe_url:
+        *rows,
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Открыть Happ / Приложение", url=happ_url)],
         [InlineKeyboardButton(text="✅ Я открыл приложение", callback_data=continue_cb)],

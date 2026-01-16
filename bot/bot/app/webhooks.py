@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import html
 from typing import Any
 
 from aiohttp import web
@@ -11,8 +12,9 @@ from sqlalchemy import select
 from .config import settings
 from .db import session_scope
 from .marzban.client import MarzbanClient
-from .models import Order
+from .models import Device, Order
 from .services.orders import get_order, mark_order_paid
+from .services.happ_connect import build_happ_links
 from .services.payments import (
     CryptoPayClient,
     YooKassaClient,
@@ -20,7 +22,8 @@ from .services.payments import (
     is_yookassa_paid,
 )
 from .services.payments.cryptopay import verify_webhook_signature
-
+from .utils.connect import verify_connect_token
+from .utils.urls import make_absolute_url
 
 def _marzban_client() -> MarzbanClient:
     return MarzbanClient(
@@ -224,11 +227,135 @@ async def yookassa_webhook(request: web.Request) -> web.Response:
 
     return web.Response(text="ok")
 
+def _platform_instructions_html(code: str) -> str:
+    base = (
+        "<ol>"
+        "<li>Откройте приложение для подключения.</li>"
+        "<li>Импортируйте ссылку или вставьте конфиг вручную.</li>"
+        "<li>Выберите профиль и нажмите «Подключить».</li>"
+        "</ol>"
+    )
+    if code == "ios":
+        return (
+            "<h3>Инструкция для iOS</h3>"
+            "<p>Установите Happ или совместимый клиент и импортируйте ссылку.</p>"
+            + base
+        )
+    if code == "android":
+        return (
+            "<h3>Инструкция для Android</h3>"
+            "<p>Установите Happ или другой VLESS-клиент и импортируйте ссылку.</p>"
+            + base
+        )
+    if code == "windows":
+        return (
+            "<h3>Инструкция для Windows</h3>"
+            "<p>Установите клиент и импортируйте ссылку или конфиг.</p>"
+            + base
+        )
+    if code == "macos":
+        return (
+            "<h3>Инструкция для macOS</h3>"
+            "<p>Установите клиент и импортируйте ссылку или конфиг.</p>"
+            + base
+        )
+    if code == "linux":
+        return (
+            "<h3>Инструкция для Linux</h3>"
+            "<p>Установите клиент и добавьте конфиг.</p>"
+            + base
+        )
+    return "<h3>Инструкция</h3>" + base
+
+
+async def connect_page(request: web.Request) -> web.Response:
+    token = request.match_info.get("token")
+    platform = request.match_info.get("platform")
+    parsed = verify_connect_token(token or "")
+    if not parsed:
+        return web.Response(status=404, text="Invalid token")
+    async with session_scope() as session:
+        device = await session.get(Device, parsed.device_id)
+        if not device or device.user_id != parsed.user_id:
+            return web.Response(status=404, text="Device not found")
+    marz = _marzban_client()
+    try:
+        link = None
+        subscription_url = None
+        if device.marzban_username:
+            user_data = await marz.get_user(device.marzban_username)
+            if isinstance(user_data, dict):
+                links = user_data.get("links") or []
+                link = links[0] if links else None
+                subscription_url = make_absolute_url(user_data.get("subscription_url"))
+    finally:
+        await marz.close()
+
+    plain_url = subscription_url
+    crypt_url = None
+    if plain_url:
+        _, crypt_url = await build_happ_links(plain_url)
+
+    vless_block = f"<pre><code>{html.escape(link or '')}</code></pre>" if link else "<p>—</p>"
+    happ_block = (
+        f'<a class="btn" href="{html.escape(crypt_url)}">Добавить в Happ</a>'
+        if crypt_url
+        else ""
+    )
+    sub_block = (
+        f'<a class="btn" href="{html.escape(plain_url)}">Открыть подписку</a>'
+        if plain_url
+        else ""
+    )
+    instructions = _platform_instructions_html(platform or "")
+    html_body = f"""
+    <html>
+      <head>
+        <meta charset="utf-8"/>
+        <title>Qdenzo Connect</title>
+        <style>
+          body {{ font-family: Arial, sans-serif; padding: 24px; max-width: 720px; margin: 0 auto; }}
+          .btn {{ display: inline-block; margin: 6px 6px 6px 0; padding: 10px 14px; background: #1f6feb; color: #fff; text-decoration: none; border-radius: 6px; }}
+          .section {{ margin-top: 18px; }}
+          code {{ word-break: break-all; white-space: pre-wrap; }}
+        </style>
+      </head>
+      <body>
+        <h2>Подключение устройства</h2>
+        <p>Выберите платформу:</p>
+        <div>
+          <a class="btn" href="./android">Android</a>
+          <a class="btn" href="./ios">iOS</a>
+          <a class="btn" href="./windows">Windows</a>
+          <a class="btn" href="./macos">macOS</a>
+          <a class="btn" href="./linux">Linux</a>
+        </div>
+        <div class="section">{instructions}</div>
+        <div class="section">
+          <h3>Ссылка подписки</h3>
+          {sub_block or "<p>Подписка пока недоступна.</p>"}
+        </div>
+        <div class="section">
+          <h3>VLESS конфиг</h3>
+          {vless_block}
+        </div>
+        <div class="section">
+          <h3>Happ</h3>
+          {happ_block or "<p>Импорт в Happ временно недоступен.</p>"}
+        </div>
+      </body>
+    </html>
+    """
+    return web.Response(text=html_body, content_type="text/html")
+
+
 
 async def start_webhook_server() -> web.AppRunner:
     app = web.Application()
     app.router.add_post("/webhook/cryptopay/{secret}", cryptopay_webhook)
     app.router.add_post("/webhook/yookassa/{secret}", yookassa_webhook)
+    app.router.add_get("/connect/{token}", connect_page)
+    app.router.add_get("/connect/{token}/{platform}", connect_page)
 
     runner = web.AppRunner(app)
     await runner.setup()
