@@ -9,6 +9,8 @@ from ..config import settings
 SUPPORTED_INLINE_SCHEMES = {"http", "https", "tg"}
 
 _DEFAULT_PUBLIC_SCHEME = "https"
+_MASK_VISIBLE_PREFIX = 8
+_MASK_VISIBLE_SUFFIX = 6
 
 
 def _normalize_base_url(url: str | None) -> str:
@@ -72,3 +74,19 @@ def sanitize_inline_url(url: str | None) -> str | None:
     if not is_supported_inline_url(absolute):
         return None
     return absolute
+
+
+
+def mask_url(url: str | None) -> str:
+    if not url:
+        return "—"
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    path = parsed.path or ""
+    if len(path) <= (_MASK_VISIBLE_PREFIX + _MASK_VISIBLE_SUFFIX):
+        masked_path = path
+    else:
+        masked_path = f"{path[:_MASK_VISIBLE_PREFIX]}…{path[-_MASK_VISIBLE_SUFFIX:]}"
+    suffix = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{parsed.netloc}{masked_path}{suffix}"

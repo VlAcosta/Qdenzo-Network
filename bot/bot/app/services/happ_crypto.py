@@ -54,9 +54,15 @@ async def encrypt_subscription_url(url: str) -> str | None:
                         )
                     data: Any = r.json()
                 # Делает tolerant parsing, т.к. формат ответа может быть {url: "..."} или {result: "..."}
-                crypt = data.get("url") or data.get("result") or data.get("link")
+                crypt = (
+                    data.get("encrypted_link")
+                    or data.get("url")
+                    or data.get("result")
+                    or data.get("link")
+                )
                 if not crypt:
-                    raise HappCryptoError(f"Crypto API response missing link: {data}")
+                    logger.warning("Happ crypto response missing link payload={}", data)
+                    return None
                 crypt = str(crypt)
                 if not crypt.startswith("happ://"):
                     raise HappCryptoError(f"Crypto API returned unexpected link: {crypt}")
